@@ -1,0 +1,12 @@
+# Official MakerMods Maker Arm SDK (MIT), pinned to the commit this kit was tested with
+maker-arm @ git+https://github.com/makermods-robotics/maker-arm-sdk.git@0245316
+# LiveKit realtime SDK + token minting
+livekit>=1.0
+livekit-api>=1.0
+python-dotenv>=1.0
+aiohttp>=3.9
+# candleLight (gs_usb) USB-to-CAN adapters on Windows/macOS
+python-can>=4.3
+gs_usb>=0.3
+pyusb>=1.2
+libusb-package>=1.0

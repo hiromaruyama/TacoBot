@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Maker Arm Control</title>
+<style>
+  :root {
+    --bg: #f5f5f3; --panel: #ffffff; --line: #e3e2de; --text: #1d1d1b; --muted: #6d6c67;
+    --accent: #2f6fde; --accent-soft: #e6eefc; --ok: #1f8a4c; --ok-soft: #e3f4ea;
+    --warn: #b4540f; --warn-soft: #fbeee2; --bad: #c62f2f; --bad-soft: #fbe6e6;
+    --track: #ecebe7; --radius: 12px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #151514; --panel: #1f1f1d; --line: #33322f; --text: #ecebe6; --muted: #9c9a93;
+      --accent: #6c9cf0; --accent-soft: #23304a; --ok: #4cc283; --ok-soft: #1c3528;
+      --warn: #e59a5b; --warn-soft: #3a2a1c; --bad: #ef7070; --bad-soft: #3e2020; --track: #2c2b28;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 14px 20px;
+           border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
+  h1 { font-size: 16px; margin: 0; font-weight: 650; }
+  .pill { padding: 3px 10px; border-radius: 99px; font-size: 12px; font-weight: 600; }
+  .pill.off { background: var(--track); color: var(--muted); }
+  .pill.on { background: var(--ok-soft); color: var(--ok); }
+  .pill.fault { background: var(--bad-soft); color: var(--bad); }
+  .pill.sim { background: var(--warn-soft); color: var(--warn); }
+  .spacer { flex: 1; }
+  .armpick { display: flex; align-items: center; gap: 8px; }
+  .armpick label { color: var(--muted); font-size: 13px; }
+  .armpick select { font-weight: 600; min-width: 190px; }
+  main { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(340px, 1fr); gap: 16px;
+         padding: 16px 20px; max-width: 1400px; margin: 0 auto; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; padding: 12px 16px; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
+  .card h2 { font-size: 13px; margin: 0 0 10px; color: var(--muted); font-weight: 600;
+             text-transform: uppercase; letter-spacing: .04em; }
+  .cam { position: relative; background: #000; border-radius: 8px; overflow: hidden; aspect-ratio: 16 / 9; }
+  video { width: 100%; height: 100%; object-fit: contain; display: block; }
+  video.mirror { transform: scaleX(-1); }
+  .cam-empty { position: absolute; inset: 0; display: grid; place-items: center; color: #aaa;
+               text-align: center; padding: 20px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+  select, button { font: inherit; color: var(--text); }
+  select { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; max-width: 100%; }
+  button { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 7px 12px;
+           cursor: pointer; font-weight: 550; user-select: none; touch-action: manipulation; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: var(--ok); border-color: var(--ok); color: #fff; }
+  button.danger { background: var(--bad-soft); border-color: var(--bad); color: var(--bad); }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; padding: 6px 11px; }
+  .seg button.sel { background: var(--accent-soft); color: var(--accent); }
+  .msg { margin-top: 10px; padding: 8px 10px; border-radius: 8px; background: var(--track); color: var(--muted);
+         min-height: 2.4em; font-size: 13px; }
+  .msg.fault { background: var(--bad-soft); color: var(--bad); }
+  .joint { display: grid; grid-template-columns: 26px 1fr auto; gap: 10px; align-items: center;
+           padding: 9px 8px; border-radius: 8px; cursor: pointer; }
+  .joint + .joint { border-top: 1px solid var(--line); }
+  .joint.sel { background: var(--accent-soft); }
+  .jn { font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .jname { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; text-transform: capitalize; }
+  .jname span:last-child { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .bar { position: relative; height: 6px; border-radius: 3px; background: var(--track); margin-top: 6px; }
+  .bar .pos { position: absolute; top: -3px; width: 4px; height: 12px; border-radius: 2px; background: var(--text);
+              transform: translateX(-2px); transition: left .1s linear; }
+  .bar .tgt { position: absolute; top: -4px; width: 10px; height: 14px; border-radius: 4px;
+              border: 2px solid var(--accent); transform: translateX(-5px); }
+  .jbtn { display: flex; gap: 6px; }
+  .jbtn button { width: 40px; height: 36px; padding: 0; font-size: 18px; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 10px; }
+  kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; font-size: 11px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Maker Arm</h1>
+  <div class="armpick">
+    <label for="armSelect">Arm</label>
+    <select id="armSelect"></select>
+  </div>
+  <span id="power" class="pill off">Off</span>
+  <span id="simpill" class="pill sim" hidden>Simulator</span>
+  <span class="spacer"></span>
+  <button id="btnPower" class="primary">Power on</button>
+  <button id="btnClear" class="danger" hidden>Clear fault</button>
+  <button id="btnHold">Hold</button>
+  <button id="btnPark" class="danger">Park &amp; power off</button>
+</header>
+
+<main>
+  <section class="card">
+    <h2>Camera</h2>
+    <div class="cam">
+      <video id="video" autoplay playsinline muted></video>
+      <div id="camEmpty" class="cam-empty">Click "Start camera" and allow access.</div>
+    </div>
+    <div class="row">
+      <button id="btnCam">Start camera</button>
+      <select id="camSelect" hidden></select>
+      <label><input type="checkbox" id="mirror"> Mirror</label>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2 id="moveTitle">Movement</h2>
+    <div class="row" style="margin-top:0">
+      <span>Step:</span>
+      <div class="seg" id="steps"></div>
+      <span class="spacer"></span>
+      <button id="gripOpen">Open gripper</button>
+      <button id="gripClose">Close gripper</button>
+    </div>
+    <div id="joints" style="margin-top:10px"></div>
+    <div id="msg" class="msg">Connecting…</div>
+    <div class="hint">
+      Keyboard: <kbd>Q</kbd>/<kbd>E</kbd> switch arm · <kbd>1</kbd>–<kbd>7</kbd> pick joint ·
+      <kbd>←</kbd>/<kbd>→</kbd> or <kbd>A</kbd>/<kbd>D</kbd> move · <kbd>Space</kbd> hold.
+      Keep a button pressed to keep moving.
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const STEPS = [1, 2, 5, 10];
+let info = null, step = 2, selected = 1, armId = null;
+const states = {};            // latest state per arm id
+const st = () => states[armId];
+
+// ---------- camera (read directly by the browser) ----------
+const video = $("video");
+async function startCamera(deviceId) {
+  try {
+    if (video.srcObject) video.srcObject.getTracks().forEach(t => t.stop());
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: deviceId ? { deviceId: { exact: deviceId }, width: 1280, height: 720 } : { width: 1280, height: 720 },
+      audio: false,
+    });
+    video.srcObject = stream;
+    $("camEmpty").hidden = true;
+    const cams = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput");
+    const current = stream.getVideoTracks()[0].getSettings().deviceId;
+    const sel = $("camSelect");
+    sel.innerHTML = cams.map((c, i) => `<option value="${c.deviceId}">${c.label || "Camera " + (i + 1)}</option>`).join("");
+    sel.value = current; sel.hidden = cams.length < 2;
+    $("btnCam").textContent = "Restart camera";
+    try { localStorage.setItem("cam", current); } catch (e) {}
+  } catch (e) {
+    $("camEmpty").hidden = false;
+    $("camEmpty").textContent = "Could not open the camera: " + e.message;
+  }
+}
+$("btnCam").onclick = () => { let saved = null; try { saved = localStorage.getItem("cam"); } catch (e) {} startCamera($("camSelect").value || saved); };
+$("camSelect").onchange = (e) => startCamera(e.target.value);
+$("mirror").onchange = (e) => video.classList.toggle("mirror", e.target.checked);
+
+// ---------- arm picker ----------
+function armLabel(a) {
+  const s = states[a.id];
+  const status = !a.ok ? "offline" : !s ? "…" : s.offline ? "not responding" : s.state === "FAULT" ? "FAULT" : s.on ? "on" : "off";
+  return `${a.id} (${a.port}) · ${status}`;
+}
+function renderArmPicker() {
+  const sel = $("armSelect");
+  sel.innerHTML = info.arms.map(a => `<option value="${a.id}" ${a.ok ? "" : "disabled"}>${armLabel(a)}</option>`).join("");
+  sel.value = armId;
+}
+function refreshArmLabels() {
+  [...$("armSelect").options].forEach((o, i) => { o.textContent = armLabel(info.arms[i]); });
+}
+function chooseArm(id) {
+  const a = info.arms.find(x => x.id === id);
+  if (!a || !a.ok) return;
+  armId = id;
+  $("armSelect").value = id;
+  $("moveTitle").textContent = `Movement · ${id} arm`;
+  try { localStorage.setItem("arm", id); } catch (e) {}
+  if (st()) renderState(); else showMsg("Loading " + id + "…");
+}
+$("armSelect").onchange = (e) => chooseArm(e.target.value);
+function cycleArm(dir) {
+  const ok = info.arms.filter(a => a.ok);
+  const i = ok.findIndex(a => a.id === armId);
+  chooseArm(ok[(i + dir + ok.length) % ok.length].id);
+}
+
+// ---------- arm API ----------
+async function send(body) {
+  const target = armId;
+  try {
+    const r = await fetch("/api/cmd", { method: "POST", headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify({ ...body, arm: target }) });
+    const j = await r.json();
+    if (target === armId) showMsg(j.msg);
+  } catch (e) { showMsg("Lost connection to web_app.py"); }
+}
+function showMsg(text, fault = false) {
+  const m = $("msg"); m.textContent = text || ""; m.classList.toggle("fault", fault);
+}
+
+function renderSteps() {
+  $("steps").innerHTML = STEPS.filter(s => s <= info.max_step)
+    .map(s => `<button data-s="${s}" class="${s === step ? "sel" : ""}">${s}°</button>`).join("");
+  $("steps").querySelectorAll("button").forEach(b => b.onclick = () => { step = +b.dataset.s; renderSteps(); });
+}
+
+function renderJoints() {
+  $("joints").innerHTML = info.joints.map(j => `
+    <div class="joint ${j.n === selected ? "sel" : ""}" data-n="${j.n}">
+      <div class="jn">J${j.n}</div>
+      <div>
+        <div class="jname"><span>${j.name}</span><span id="val${j.n}">—</span></div>
+        <div class="bar"><div class="tgt" id="tgt${j.n}" hidden></div><div class="pos" id="pos${j.n}"></div></div>
+      </div>
+      <div class="jbtn">
+        <button data-j="${j.n}" data-d="-1" aria-label="J${j.n} minus">−</button>
+        <button data-j="${j.n}" data-d="1" aria-label="J${j.n} plus">+</button>
+      </div>
+    </div>`).join("");
+  $("joints").querySelectorAll(".joint").forEach(row =>
+    row.addEventListener("click", () => select(+row.dataset.n)));
+  $("joints").querySelectorAll("button[data-j]").forEach(b =>
+    holdToRepeat(b, () => jog(+b.dataset.j, +b.dataset.d)));
+}
+function select(n) {
+  selected = n;
+  document.querySelectorAll(".joint").forEach(r => r.classList.toggle("sel", +r.dataset.n === n));
+}
+let lastJog = 0;
+function jog(joint, dir) {
+  if (!st() || !st().on) { showMsg(`The ${armId} arm is off: press Power on first.`); return; }
+  const now = performance.now();
+  if (now - lastJog < 250) return;  // at most 4 steps per second (held keys repeat much faster)
+  lastJog = now;
+  send({ cmd: "jog", joint, deg: dir * step });
+}
+
+// press = one step; keep pressing = repeat every 300 ms
+function holdToRepeat(el, fn) {
+  let timer = null;
+  const stop = () => { clearTimeout(timer); clearInterval(timer); timer = null; };
+  el.addEventListener("pointerdown", (e) => {
+    e.preventDefault(); e.stopPropagation(); fn();
+    timer = setTimeout(() => { timer = setInterval(fn, 300); }, 400);
+  });
+  ["pointerup", "pointerleave", "pointercancel"].forEach(ev => el.addEventListener(ev, stop));
+  el.addEventListener("click", (e) => e.stopPropagation());
+}
+
+function pct(j, v) { return Math.min(100, Math.max(0, (v - j.lo) / (j.hi - j.lo) * 100)); }
+
+function renderState() {
+  const s = st();
+  if (!s) return;
+  const on = !!s.on, fault = s.state === "FAULT", offline = !!s.offline;
+  const p = $("power");
+  p.textContent = offline ? "Offline" : fault ? "FAULT" : on ? "On" : "Off";
+  p.className = "pill " + (fault || offline ? "fault" : on ? "on" : "off");
+  $("btnClear").hidden = !fault;
+  $("btnPower").disabled = on || offline || fault;
+  $("btnHold").disabled = !on;
+  $("btnPark").disabled = !on;
+  $("gripOpen").disabled = $("gripClose").disabled = !on;
+  document.querySelectorAll("button[data-j]").forEach(b => b.disabled = !on);
+  if (offline) { showMsg(`The ${armId} arm is not responding: ${s.error || ""}`, true); return; }
+  info.joints.forEach((j, i) => {
+    const v = s.joints_deg[i];
+    const temp = s.temps_c && s.temps_c[i];
+    const hot = Number.isFinite(temp) && temp >= 60;
+    const val = $("val" + j.n);
+    val.textContent = (Number.isFinite(v) ? v.toFixed(1) + "°" : "—") + (hot ? `  ·  ${temp.toFixed(0)}°C` : "");
+    val.style.color = !hot ? "" : temp > 70 ? "var(--bad)" : "var(--warn)";
+    val.title = Number.isFinite(temp) ? `motor temperature ${temp.toFixed(0)}°C` : "";
+    if (Number.isFinite(v)) $("pos" + j.n).style.left = pct(j, v) + "%";
+    const t = s.targets_deg && s.targets_deg[i];
+    const tg = $("tgt" + j.n);
+    tg.hidden = !(on && Number.isFinite(t));
+    if (!tg.hidden) tg.style.left = pct(j, t) + "%";
+  });
+  if (fault) showMsg("FAULT: " + (s.fault || "unknown"), true);
+  else if (s.msg) showMsg(s.msg);
+}
+
+async function poll() {
+  try {
+    await Promise.all(info.arms.filter(a => a.ok).map(async a => {
+      const r = await fetch("/api/state?arm=" + encodeURIComponent(a.id));
+      states[a.id] = await r.json();
+    }));
+    renderState();
+    refreshArmLabels();
+  } catch (e) { showMsg("Lost connection to web_app.py (is it running?)", true); }
+  setTimeout(poll, 250);
+}
+
+$("btnPower").onclick = () => {
+  if (confirm(`Power on the ${armId} arm?\n\nArea clear, arm clamped to the table, and someone next to the power switch?\n\nThe motors switch on and the arm holds where it is.`)) send({ cmd: "power" });
+};
+$("btnHold").onclick = () => send({ cmd: "hold" });
+$("btnClear").onclick = () => {
+  if (confirm(`Clear the fault on the ${armId} arm?\n\nIt first walks back to the pose it had at power-on, then switches the motors off. Keep the path clear.`)) send({ cmd: "clear" });
+};
+$("btnPark").onclick = () => send({ cmd: "park" });
+// gripper (J7): closing is the + direction in the Maker Arm profile
+holdToRepeat($("gripOpen"), () => jog(7, -1));
+holdToRepeat($("gripClose"), () => jog(7, 1));
+
+document.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "SELECT" || e.target.tagName === "INPUT") return;
+  const k = e.key.toLowerCase();
+  if (e.repeat && !["arrowleft", "arrowright", "a", "d"].includes(k)) return;
+  if (/^[1-7]$/.test(k)) select(+k);
+  else if (k === "q") cycleArm(-1);
+  else if (k === "e") cycleArm(1);
+  else if (k === "arrowleft" || k === "a") { e.preventDefault(); jog(selected, -1); }
+  else if (k === "arrowright" || k === "d") { e.preventDefault(); jog(selected, 1); }
+  else if (k === " ") { e.preventDefault(); if (st() && st().on) send({ cmd: "hold" }); }
+});
+
+(async () => {
+  info = await (await fetch("/api/info")).json();
+  $("simpill").hidden = !info.sim;
+  let saved = null; try { saved = localStorage.getItem("arm"); } catch (e) {}
+  const first = info.arms.find(a => a.ok && a.id === saved) || info.arms.find(a => a.ok);
+  armId = first.id;
+  renderArmPicker(); chooseArm(armId);
+  renderSteps(); renderJoints(); poll();
+})();
+</script>
+</body>
+</html>
