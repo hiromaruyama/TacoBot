@@ -106,7 +106,9 @@
   </div>
   <span id="power" class="pill off">Off</span>
   <span id="simpill" class="pill sim" hidden>Simulator</span>
+  <span id="adapters" class="muted" title="USB-CAN adapters plugged into this laptop (checked live every 3 s)"></span>
   <span class="spacer"></span>
+  <button id="btnConnect" hidden>Connect</button>
   <button id="btnPower" class="primary">Power on</button>
   <button id="btnClear" class="danger" hidden>Clear fault</button>
   <button id="btnHold">Hold</button>
@@ -202,14 +204,15 @@ $("camSelect").onchange = (e) => startCamera(e.target.value);
 $("mirror").onchange = (e) => video.classList.toggle("mirror", e.target.checked);
 
 // ---------- arm picker ----------
-function armLabel(a) {
+function armStatus(a) {
   const s = states[a.id];
-  const status = !a.ok ? "offline" : !s ? "…" : s.offline ? "not responding" : s.state === "FAULT" ? "FAULT" : s.on ? "on" : "off";
-  return `${a.id} (${a.port}) · ${status}`;
+  if (!a.ok) return a.connecting ? "connecting…" : a.present === false ? "unplugged" : "not connected";
+  return !s ? "…" : s.offline ? "not responding" : s.state === "FAULT" ? "FAULT" : s.on ? "on" : "off";
 }
+function armLabel(a) { return `${a.id} (${a.port}) · ${armStatus(a)}`; }
 function renderArmPicker() {
   const sel = $("armSelect");
-  sel.innerHTML = info.arms.map(a => `<option value="${a.id}" ${a.ok ? "" : "disabled"}>${armLabel(a)}</option>`).join("");
+  sel.innerHTML = info.arms.map(a => `<option value="${a.id}">${armLabel(a)}</option>`).join("");
   sel.value = armId;
 }
 function refreshArmLabels() {
@@ -217,7 +220,7 @@ function refreshArmLabels() {
 }
 function chooseArm(id) {
   const a = info.arms.find(x => x.id === id);
-  if (!a || !a.ok) return;
+  if (!a) return;
   if (armId && id !== armId) Teleop.stop();  // the old arm holds before we switch
   armId = id;
   $("armSelect").value = id;
@@ -227,9 +230,9 @@ function chooseArm(id) {
 }
 $("armSelect").onchange = (e) => chooseArm(e.target.value);
 function cycleArm(dir) {
-  const ok = info.arms.filter(a => a.ok);
-  const i = ok.findIndex(a => a.id === armId);
-  chooseArm(ok[(i + dir + ok.length) % ok.length].id);
+  const all = info.arms;
+  const i = all.findIndex(a => a.id === armId);
+  chooseArm(all[(i + dir + all.length) % all.length].id);
 }
 
 // ---------- arm API ----------
@@ -433,14 +436,23 @@ function renderState() {
   const s = st();
   if (!s) return;
   const on = !!s.on, fault = s.state === "FAULT", offline = !!s.offline;
+  const notConnected = s.connected === false;
+  $("btnConnect").hidden = !notConnected;
+  $("btnConnect").disabled = !!s.connecting;
+  $("btnConnect").textContent = s.connecting ? "Connecting…" : "Connect";
   const p = $("power");
-  p.textContent = offline ? "Offline" : fault ? "FAULT" : on ? "On" : "Off";
+  p.textContent = notConnected ? (s.connecting ? "Connecting…" : "Not connected") : offline ? "Offline" : fault ? "FAULT" : on ? "On" : "Off";
   p.className = "pill " + (fault || offline ? "fault" : on ? "on" : "off");
   $("btnClear").hidden = !fault;
   $("btnPower").disabled = on || offline || fault;
   $("btnHold").disabled = !on;
   $("btnPark").disabled = !on;
   Teleop.setGripEnabled(on);
+  if (notConnected) {
+    showMsg(s.connecting ? `Connecting the ${armId} arm…` : `The ${armId} arm is not connected: ${s.error || "?"}. ` +
+      "It connects by itself when its adapter is plugged in and the arm has power, or press Connect.", !s.connecting);
+    return;
+  }
   if (offline) { showMsg(`The ${armId} arm is not responding: ${s.error || ""}`, true); return; }
   info.joints.forEach((j, i) => {
     const v = s.joints_deg[i];
@@ -462,10 +474,13 @@ function renderState() {
 
 async function poll() {
   try {
-    await Promise.all(info.arms.filter(a => a.ok).map(async a => {
+    await Promise.all(info.arms.map(async a => {
       const r = await fetch("/api/state?arm=" + encodeURIComponent(a.id));
-      states[a.id] = await r.json();
-      if (states[a.id].team) renderTeam(states[a.id].team);
+      const j = await r.json();
+      states[a.id] = j;
+      if (j.team) renderTeam(j.team);
+      if (j.arms) info.arms = j.arms;  // live connection status of every arm
+      if (j.adapters) renderAdapters(j.adapters);
     }));
     renderState();
     refreshArmLabels();
@@ -477,6 +492,11 @@ $("btnPower").onclick = () => {
   if (confirm(`Power on the ${armId} arm?\n\nArea clear, arm clamped to the table, and someone next to the power switch?\n\nThe motors switch on and the arm holds where it is.`)) send({ cmd: "power" });
 };
 $("btnHold").onclick = () => send({ cmd: "hold" });
+$("btnConnect").onclick = () => { $("btnConnect").disabled = true; showMsg(`Connecting the ${armId} arm…`); send({ cmd: "connect" }); };
+function renderAdapters(list) {
+  if (info.sim) { $("adapters").textContent = ""; return; }
+  $("adapters").textContent = list.length ? "USB: " + list.join(", ") : "USB: no adapter plugged in";
+}
 $("btnClear").onclick = () => {
   if (confirm(`Clear the fault on the ${armId} arm?\n\nIt first walks back to the pose it had at power-on, then switches the motors off. Keep the path clear.`)) send({ cmd: "clear" });
 };
@@ -569,7 +589,7 @@ $("camSelect").addEventListener("change", () => setTimeout(() => { if (lkPub) sh
   $("simpill").hidden = !info.sim;
   $("teamBox").hidden = !info.livekit;
   let saved = null; try { saved = localStorage.getItem("arm"); } catch (e) {}
-  const first = info.arms.find(a => a.ok && a.id === saved) || info.arms.find(a => a.ok);
+  const first = info.arms.find(a => a.id === saved) || info.arms.find(a => a.ok) || info.arms[0];
   armId = first.id;
   renderArmPicker(); chooseArm(armId);
   renderJoints();

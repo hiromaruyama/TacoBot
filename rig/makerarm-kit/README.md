@@ -172,7 +172,11 @@ The browser opens at **http://127.0.0.1:8765** (also http://localhost:8765).
    Ctrl-C in the terminal parks every arm and quits.
 
 Start on **Slow** with J1 (base) and J4–J6 (wrist); J2/J3 carry the arm's weight.
-If an arm can't be reached, it shows as *offline* and the other one still works.
+The app starts even with **no arm connected**. It checks the USB adapters live (every 3 s, shown as
+`USB: COM9, candle:0` in the header) and connects an arm by itself as soon as its adapter is plugged in
+and its motors answer (retrying every 10 s). Pick a *not connected* arm and press **Connect** to try
+right away. Unplugging an adapter while its motors are off frees that arm; it reconnects when plugged
+back in. The other arm keeps working meanwhile.
 
 ## 7. Team control from anywhere (LiveKit)
 

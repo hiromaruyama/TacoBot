@@ -289,7 +289,7 @@ function build() {
   const ok = info.arms.filter(a => a.ok);
   let saved = null; try { saved = localStorage.getItem("remoteArm"); } catch (e) {}
   armId = (ok.find(a => a.id === saved) || ok[0] || info.arms[0]).id;
-  $("armSelect").innerHTML = info.arms.map(a => `<option value="${a.id}" ${a.ok ? "" : "disabled"}>${a.id}</option>`).join("");
+  $("armSelect").innerHTML = info.arms.map(a => `<option value="${a.id}">${a.id}</option>`).join("");
   $("armSelect").value = armId; $("armSelect").disabled = false;
   $("armSelect").onchange = (e) => chooseArm(e.target.value);
   $("joints").innerHTML = info.joints.map(j => `
@@ -318,9 +318,9 @@ function chooseArm(id) {
   if (latest) render();
 }
 function cycleArm(dir) {
-  const ok = latest.info.arms.filter(a => a.ok);
-  const i = ok.findIndex(a => a.id === armId);
-  chooseArm(ok[(i + dir + ok.length) % ok.length].id);
+  const all = latest.info.arms;
+  const i = all.findIndex(a => a.id === armId);
+  chooseArm(all[(i + dir + all.length) % all.length].id);
 }
 // ---------- real-time teleop: on-screen joysticks + held keys (same block in index.html and remote.html) ----------
 // Every 100 ms the joystick deflection / held keys become small relative steps for several joints at
@@ -507,12 +507,13 @@ function render() {
   // arm labels with status
   [...$("armSelect").options].forEach(o => {
     const a = latest.arms[o.value];
-    const status = !a ? "" : a.offline ? "not responding" : a.state === "FAULT" ? "FAULT" : a.on ? "on" : "off";
+    const status = !a ? "" : a.connected === false ? (a.connecting ? "connecting…" : "not connected")
+      : a.offline ? "not responding" : a.state === "FAULT" ? "FAULT" : a.on ? "on" : "off";
     o.textContent = `${o.value} · ${status}`;
   });
   if (!s) return;
   const on = !!s.on, fault = s.state === "FAULT", offline = !!s.offline;
-  $("power").textContent = offline ? "Not responding" : fault ? "FAULT" : on ? "On" : "Off (power on at the arm laptop)";
+  $("power").textContent = s.connected === false ? "Not connected (arm laptop)" : offline ? "Not responding" : fault ? "FAULT" : on ? "On" : "Off (power on at the arm laptop)";
   $("power").className = "pill " + (fault || offline ? "fault" : on ? "on" : "off");
   enableControls(on && ctl === me);
   if (offline) { showMsg(`The ${armId} arm is not responding: ${s.error || ""}`, true); return; }
