@@ -1,8 +1,0 @@
-branch = "rig/makerarm-web-kit"
-lane = "rig"
-task = "Maker Arm web kit: camera + jog UI, first-move script, LiveKit bridge"
-owner = "Carlo"
-created = "2026-11-07T16:16"
-paths = [
-  "rig/makerarm-kit/**",
-]
