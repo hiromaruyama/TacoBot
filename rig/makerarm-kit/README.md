@@ -24,6 +24,7 @@ COM port) and one candleLight adapter (no COM port, uses gs_usb). macOS and Linu
 | `first_move.py` | Simplest test: nudge one joint a few degrees and back. Also lists ports |
 | `arm_server.py` | Runs next to an arm: joins a LiveKit room and accepts small jog commands |
 | `controller.py` | Runs anywhere: keyboard (or `--demo`) control over LiveKit |
+| `diagnose.py` | Motors-off health check of one arm: mode, faults, temperature, position, **supply voltage** |
 | `zero_gripper.py` | Re-zero only the gripper (motor 7) when it lost its zero; torque stays off |
 | `sim.py` | Simulated motors so everything works with `--sim`, no hardware |
 | `setup.sh` / `setup.ps1` | One-time setup (macOS/Linux / Windows) |
@@ -243,6 +244,9 @@ All limits are at the top of `armkit.py`.
 |---|---|
 | `too hot to power on (J3 78°C ...)` | A motor is above 70 °C. Let it cool; if it stays hot for 10–15 min, tell the MakerMods staff. |
 | `gripper (motor 7) at +82.7 deg is outside its limits ... stale or missing zero` | The gripper lost its zero (common after a power cycle or a thermal cut-off). Power-on is blocked on purpose. Close every app using that arm, then `python zero_gripper.py --port candle:0` (that arm's port): motors stay off, you close the gripper fully by hand, type `ZERO`, and it checks the new reading is ~0°. Only the gripper is touched. If a *joint* (J1–J6) shows this, ask the staff: that needs the full `maker-arm zero` at the folded pose. |
+| `motor N enable rejected: mode=0` | The motor answers but won't energize. Run `python diagnose.py --port <port>` (app closed): if every motor shows **vbus 0.0V**, the arm has **no motor power**: release the e-stop, check the power supply (on, plugged, LED) and any fuse. |
+| `gripper: CAN timeout read back 0, expected 10000` | Handled automatically now: that gripper's firmware ignores its 500 ms watchdog setting, so it runs without it (like older grippers). If you still see it, update the kit. |
+| Any first problem | `python diagnose.py --port <port>` with the app closed: it reads every motor (motors stay off) and explains common findings. |
 | `not responding` / USB `Input/Output Error` | That arm's CAN bus isn't answering: check its power supply and e-stop. The app keeps retrying. |
 | `Access denied` / `could not open port` | Another program holds the adapter (a second web_app, MakerModsLab, upstream's robot). Close it. |
 | Arm in **FAULT** | Use **Clear fault** on the arm laptop: it walks back to the power-on pose, then clears. |
