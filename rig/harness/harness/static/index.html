@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rig Harness</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --panel: #ffffff; --ink: #16181d; --muted: #667085; --line: #e3e6ea;
+    --accent: #2563eb; --ok: #15803d; --warn: #b45309; --bad: #b91c1c; --hold: #b91c1c;
+    --chip: #eef1f5; --video-bg: #0b0d10; --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e1013; --panel: #171a1f; --ink: #e7e9ee; --muted: #8b93a3; --line: #262a31;
+      --accent: #60a5fa; --ok: #4ade80; --warn: #fbbf24; --bad: #f87171; --hold: #dc2626; --chip: #22262d;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.4 system-ui, -apple-system, sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; background: var(--panel);
+           border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; flex-wrap: wrap; }
+  header h1 { font-size: 15px; margin: 0 8px 0 0; letter-spacing: .02em; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px;
+          background: var(--chip); font-size: 12px; white-space: nowrap; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); } .dot.warn { background: var(--warn); }
+  .driver { font-weight: 600; font-size: 13px; padding: 4px 12px; border-radius: 6px; background: var(--chip); }
+  .driver.dream { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent); }
+  .driver.human { background: color-mix(in srgb, var(--warn) 22%, transparent); color: var(--warn); }
+  .spacer { flex: 1; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--chip); color: var(--ink);
+           padding: 7px 12px; border-radius: 7px; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--muted); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.hold { background: var(--hold); border-color: var(--hold); color: #fff; font-weight: 700; padding: 8px 18px; }
+  button.danger { color: var(--bad); }
+  main { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(320px, 1fr); gap: 14px; padding: 14px 16px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+  .panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; }
+  .col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .cams { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .cam { position: relative; background: var(--video-bg); border-radius: 8px; overflow: hidden; aspect-ratio: 4/3; }
+  .cam.big { grid-column: 1 / -1; aspect-ratio: 16/9; }
+  .cam img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .cam .label { position: absolute; left: 8px; top: 6px; font-size: 11px; color: #fff; background: #0008;
+                padding: 2px 7px; border-radius: 4px; font-family: var(--mono); }
+  .cam .stale { position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+                color: #fff; background: #000a; font-size: 13px; }
+  .cam.is-stale .stale { display: flex; }
+  textarea { width: 100%; font: inherit; padding: 8px; border-radius: 7px; border: 1px solid var(--line);
+             background: var(--bg); color: var(--ink); resize: vertical; min-height: 58px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .row + .row { margin-top: 8px; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+  .chip { font-size: 12px; padding: 3px 9px; border-radius: 999px; background: var(--chip); border: 1px solid var(--line);
+          cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 13px; }
+  .kv dt { color: var(--muted); } .kv dd { margin: 0; overflow-wrap: anywhere; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .sub { font-size: 11px; color: var(--muted); margin: 10px 0 4px; text-transform: uppercase; letter-spacing: .05em; }
+  table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
+  th { text-align: left; color: var(--muted); font-weight: 500; padding: 2px 4px; }
+  td { padding: 2px 4px; white-space: nowrap; }
+  td.bar { width: 45%; }
+  .track { position: relative; height: 8px; background: var(--chip); border-radius: 4px; }
+  .track .s, .track .a { position: absolute; top: -2px; width: 3px; height: 12px; border-radius: 2px; }
+  .track .s { background: var(--ink); } .track .a { background: var(--accent); opacity: .7; }
+  .track .mid { position: absolute; left: 50%; top: 0; width: 1px; height: 8px; background: var(--line); }
+  .log { font-family: var(--mono); font-size: 11.5px; max-height: 260px; overflow: auto; }
+  .log div { padding: 2px 0; border-bottom: 1px dashed var(--line); }
+  .log .error { color: var(--bad); } .log .warn { color: var(--warn); }
+  .log .t { color: var(--muted); margin-right: 6px; }
+  .steps { list-style: none; padding: 0; margin: 0 0 8px; max-height: 240px; overflow: auto; }
+  .steps li { display: flex; gap: 8px; padding: 4px 6px; border-radius: 6px; font-size: 13px; cursor: pointer; }
+  .steps li.cur { background: color-mix(in srgb, var(--accent) 15%, transparent); }
+  .steps li.done { color: var(--muted); text-decoration: line-through; }
+  .steps .k { font-family: var(--mono); font-size: 11px; color: var(--muted); min-width: 46px; }
+  #toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--bg);
+           padding: 8px 14px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none;
+           max-width: calc(100% - 32px); }
+  #toast.show { opacity: .95; } #toast.err { background: var(--bad); color: #fff; }
+  #banner { margin: 14px 16px 0; padding: 10px 14px; border-radius: 8px; font-size: 13px;
+            background: color-mix(in srgb, var(--warn) 16%, var(--panel)); border: 1px solid var(--warn); }
+  #banner code { font-family: var(--mono); font-size: 12px; }
+  kbd { font-family: var(--mono); font-size: 11px; padding: 0 4px; border: 1px solid var(--line); border-radius: 3px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Rig Harness</h1>
+  <span class="pill" id="link"><span class="dot"></span><span>connecting…</span></span>
+  <span class="pill" id="dreamPill"><span class="dot"></span><span>dream-1</span></span>
+  <span class="pill" id="teleopPill"><span class="dot"></span><span>leaders</span></span>
+  <span class="driver" id="driver" title="Active operator: who the robot obeys">—</span>
+  <span class="spacer"></span>
+  <span class="muted" id="latency"></span>
+  <button class="hold" id="holdBtn" title="Release control: nobody drives, the arms hold where they are (Space)">HOLD</button>
+</header>
+
+<div id="banner" hidden></div>
+<main>
+  <div class="col">
+    <section class="panel">
+      <h2>Cameras</h2>
+      <div class="cams" id="cams"></div>
+    </section>
+    <section class="panel">
+      <h2>Arms <span class="muted" id="stateAge"></span></h2>
+      <div id="joints" class="muted">no state yet</div>
+      <div class="muted" style="margin-top:6px">
+        <span style="display:inline-block;width:10px;height:3px;background:var(--ink);vertical-align:middle"></span> measured
+        &nbsp;<span style="display:inline-block;width:10px;height:3px;background:var(--accent);vertical-align:middle"></span> commanded
+        <span id="sender"></span> · joints in °, gripper in mm
+      </div>
+    </section>
+  </div>
+
+  <div class="col">
+    <section class="panel">
+      <h2>Prompt Dream-1</h2>
+      <textarea id="task" maxlength="200" placeholder="One concrete instruction, e.g. pick up the tortilla and lay it flat in the middle of the griddle"></textarea>
+      <div class="row" style="justify-content:space-between">
+        <span class="muted"><span id="chars">0</span>/200 · <kbd>Enter</kbd> set · <kbd>⌘/Ctrl+Enter</kbd> set &amp; start</span>
+      </div>
+      <div class="chips" id="presets"></div>
+      <div class="row">
+        <button id="setBtn">Set task</button>
+        <button class="primary" id="setStartBtn">Set &amp; start</button>
+      </div>
+      <p class="muted" style="margin:8px 0 0">Setting a task pauses Dream-1; it moves only after <b>Start</b>.</p>
+    </section>
+
+    <section class="panel">
+      <h2>Control</h2>
+      <dl class="kv" style="margin:0 0 10px">
+        <dt>Task</dt><dd id="curTask">—</dd>
+        <dt>Driving</dt><dd id="curDriving">—</dd>
+      </dl>
+      <div class="row">
+        <button class="primary" data-cmd="resume" title="Dream-1 takes control: new episode on the current task">▶ Start / resume</button>
+        <button data-cmd="pause" title="Dream-1 releases control; the arms hold">❚❚ Pause</button>
+      </div>
+      <div class="sub">Hand off</div>
+      <div class="row">
+        <button data-cmd="teleop" id="teleopBtn">To leader arms</button>
+        <button data-cmd="hand_teleop" id="handBtn">To hand teleop</button>
+        <button data-cmd="stop_hand_teleop">Take from hand</button>
+      </div>
+      <div class="sub">Robot</div>
+      <div class="row">
+        <button data-cmd="home" title="Walk powered arms back to rest and hold (releases control)">⌂ Home</button>
+        <button data-cmd="park" class="danger" data-confirm="Park: arms walk to rest and switch OFF. Powering up again is only at the robot terminal (p). Park now?">Park (power off)</button>
+      </div>
+      <p class="muted" style="margin:10px 0 0">Not an e-stop. Keep a person on the leader arms or the robot terminal's <kbd>p</kbd>.</p>
+    </section>
+
+    <section class="panel" id="seqPanel" hidden>
+      <h2>Sequence <span class="muted" id="seqPhase"></span></h2>
+      <ul class="steps" id="steps"></ul>
+      <div class="row">
+        <button class="primary" data-seq="start">Start step</button>
+        <button data-seq="done">Done → next</button>
+        <button data-seq="retry">Retry</button>
+        <button data-seq="teleop">To leaders</button>
+        <button data-seq="stop">Stop</button>
+      </div>
+      <p class="muted" style="margin:8px 0 0">Click a step to arm it. Arming sets the task; nothing moves until Start step.</p>
+    </section>
+
+    <section class="panel">
+      <h2>Room</h2>
+      <dl class="kv" id="room"></dl>
+    </section>
+
+    <section class="panel">
+      <h2>Events</h2>
+      <div class="log" id="log"></div>
+    </section>
+  </div>
+</main>
+<div id="toast"></div>
+
+<script>
+const TOKEN = new URLSearchParams(location.search).get('token') || '';
+const q = TOKEN ? `?token=${encodeURIComponent(TOKEN)}` : '';
+const $ = (id) => document.getElementById(id);
+const SIDES = ['left', 'right'];
+const JOINTS = ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6', 'gripper'];
+const NAMES = { joint1: 'base', joint2: 'shoulder', joint3: 'elbow', joint4: 'wr flex', joint5: 'wr yaw', joint6: 'wr roll', gripper: 'grip' };
+let S = null, camsBuilt = '';
+
+function toast(msg, err) {
+  const t = $('toast'); t.textContent = msg; t.className = 'show' + (err ? ' err' : '');
+  clearTimeout(toast.h); toast.h = setTimeout(() => (t.className = ''), err ? 5000 : 2200);
+}
+
+async function post(path, body) {
+  try {
+    const r = await fetch(path + q, { method: 'POST', headers: { 'Content-Type': 'application/json',
+      ...(TOKEN ? { Authorization: 'Bearer ' + TOKEN } : {}) }, body: JSON.stringify(body || {}) });
+    const j = await r.json();
+    if (!j.ok) { toast(j.error || 'failed', true); return null; }
+    toast(typeof j.result === 'string' ? j.result : 'ok');
+    return j.result;
+  } catch (e) { toast(String(e), true); return null; }
+}
+
+function buildCams(names) {
+  const key = names.join(',');
+  if (key === camsBuilt) return;
+  camsBuilt = key;
+  const order = [...names].sort((a, b) => (b === 'overhead_camera') - (a === 'overhead_camera'));
+  $('cams').innerHTML = order.map((n, i) => `
+    <div class="cam ${i === 0 ? 'big' : ''}" id="cam-${n}">
+      <img alt="${n}" src="/video/${n}.mjpg${q}">
+      <span class="label">${n} <span class="meta"></span></span>
+      <div class="stale">no video</div>
+    </div>`).join('');
+}
+
+const deg = (r) => (r * 180 / Math.PI);
+function pos(v, j) { // map to 0..100% for the bar
+  if (v == null) return null;
+  if (j === 'gripper') return Math.max(0, Math.min(100, v));
+  return Math.max(0, Math.min(100, 50 + deg(v) / 180 * 50));
+}
+function fmt(v, j) { return v == null ? '–' : j === 'gripper' ? v.toFixed(1) : deg(v).toFixed(1); }
+
+function renderJoints(st, act) {
+  if (!st) { $('joints').textContent = 'no state yet'; $('joints').className = 'muted'; return; }
+  $('joints').className = '';
+  $('joints').innerHTML = SIDES.map(side => `
+    <div class="sub">${side} arm</div>
+    <table><tr><th>joint</th><th>meas</th><th>cmd</th><th></th></tr>
+    ${JOINTS.map(j => {
+      const k = `${side}_${j}.pos`, s = st[k], a = act ? act[k] : null, ps = pos(s, j), pa = pos(a, j);
+      return `<tr><td>${NAMES[j]}</td><td>${fmt(s, j)}</td><td>${fmt(a, j)}</td>
+        <td class="bar"><div class="track">${j === 'gripper' ? '' : '<span class="mid"></span>'}
+        ${pa == null ? '' : `<span class="a" style="left:calc(${pa}% - 1px)"></span>`}
+        ${ps == null ? '' : `<span class="s" style="left:calc(${ps}% - 1px)"></span>`}</div></td></tr>`;
+    }).join('')}</table>`).join('');
+}
+
+function setPill(id, cls, text) { const p = $(id); p.querySelector('.dot').className = 'dot ' + cls; p.lastElementChild.textContent = text; }
+
+function render(s) {
+  S = s;
+  setPill('link', s.connected ? 'ok' : 'bad', s.connected ? `room ${s.room}` : (s.connect_error ? 'waiting for robot' : 'connecting…'));
+  $('link').title = s.connect_error || '';
+  const banner = $('banner');
+  banner.hidden = s.connected;
+  if (!s.connected) {
+    banner.innerHTML = `<b>Not connected to room <code></code>.</b> Retrying every few seconds. `
+      + `The robot (<code>uv run robot</code>) must be running on the server laptop in the same LiveKit project and room. `
+      + `Check with <code>uv run harness --check</code>.<br><span class="muted"></span>`;
+    banner.querySelector('code').textContent = s.room;
+    banner.querySelector('.muted').textContent = s.connect_error || 'connecting…';
+  }
+  const d = s.dream;
+  setPill('dreamPill', d && !s.dream_error ? 'ok' : 'bad', d && !s.dream_error ? 'dream-1' : 'dream-1 offline');
+  $('dreamPill').title = s.dream_error || '';
+  setPill('teleopPill', d && d.teleoperator_connected ? 'ok' : '', d && d.teleoperator_connected ? 'leaders' : 'no leaders');
+  const who = s.active_operator;
+  const drv = $('driver');
+  drv.textContent = who ? `driving: ${who === 'policy-dream-1-tasks' ? 'Dream-1' : who}` : 'nobody drives · arms hold';
+  drv.className = 'driver ' + (who === 'policy-dream-1-tasks' ? 'dream' : who ? 'human' : '');
+  $('latency').textContent = s.policy_latency_ms != null && who ? `policy latency ${s.policy_latency_ms} ms` : '';
+
+  $('curTask').textContent = d ? (d.task || '(none yet)') : '—';
+  $('curDriving').textContent = d ? (d.driving ? 'Dream-1 has control' : 'Dream-1 paused') : '—';
+  $('teleopBtn').disabled = !(d && d.teleoperator_connected);
+  $('handBtn').disabled = !(d && d.hand_teleop_connected);
+  const presets = (d && d.presets) || [];
+  const pkey = presets.join('\n');
+  if ($('presets').dataset.k !== pkey) {
+    $('presets').dataset.k = pkey;
+    $('presets').innerHTML = presets.map((p, i) => `<span class="chip" title="${p.replace(/"/g, '&quot;')}" data-i="${i}">${i + 1}. ${p}</span>`).join('');
+  }
+
+  const camNames = Object.keys(s.cameras || {});
+  if (camNames.length) buildCams(camNames);
+  for (const [n, c] of Object.entries(s.cameras || {})) {
+    const el = $('cam-' + n); if (!el) continue;
+    const stale = c.age_s == null || c.age_s > 2;
+    el.classList.toggle('is-stale', stale);
+    el.querySelector('.stale').textContent = c.age_s == null ? 'no video yet' : `stale ${c.age_s.toFixed(0)} s`;
+    el.querySelector('.meta').textContent = stale ? '' : `${c.fps} fps`;
+  }
+  renderJoints(s.state, s.action);
+  $('stateAge').textContent = s.state_age_s != null ? `· ${s.state_age_s < 1 ? 'live' : s.state_age_s.toFixed(0) + ' s old'}` : '';
+  $('sender').textContent = s.action_sender ? `(from ${s.action_sender}, ${s.action_age_s}s ago)` : '';
+
+  $('room').innerHTML = [
+    ['robot', s.robot || '—'], ['operators', (s.operators || []).join(', ') || '—'],
+    ['observers', (s.observers || []).join(', ') || '—'], ['harness id', s.identity],
+  ].map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+
+  const seq = s.sequence;
+  $('seqPanel').hidden = !seq;
+  if (seq) {
+    $('seqPhase').textContent = `· ${seq.phase}${seq.wait_left_s != null ? ` (${seq.wait_left_s.toFixed(0)} s)` : ''}`;
+    $('steps').innerHTML = seq.steps.map((st, i) => `<li data-i="${i}" class="${i === seq.index && seq.phase !== 'finished' ? 'cur' : ''} ${seq.completed.includes(st.id) && i < seq.index ? 'done' : ''}">
+      <span class="k">${st.kind}</span><span><b>${st.id}</b> ${st.prompt || (st.wait_s != null ? `wait ${st.wait_s}s` : 'arms home')}</span></li>`).join('');
+  }
+}
+
+function addEvent(e) {
+  const log = $('log');
+  const div = document.createElement('div');
+  div.className = e.level;
+  div.innerHTML = `<span class="t">${new Date(e.t * 1000).toLocaleTimeString()}</span>[${e.kind}] `;
+  div.appendChild(document.createTextNode(e.text));
+  log.prepend(div);
+  while (log.children.length > 300) log.lastChild.remove();
+}
+
+function connect() {
+  const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws${q}`);
+  ws.onmessage = (m) => {
+    const msg = JSON.parse(m.data);
+    if (msg.type === 'state') render(msg.state);
+    else if (msg.type === 'event') addEvent(msg.event);
+    else if (msg.type === 'events') { $('log').innerHTML = ''; msg.events.forEach(addEvent); }
+  };
+  ws.onclose = () => { setPill('link', 'bad', 'harness offline'); setTimeout(connect, 1500); };
+}
+
+async function setTask(start) {
+  const task = $('task').value.trim();
+  if (!task) { toast('type a task first', true); return; }
+  const r = await post('/api/prompt', { task, start });
+  if (r) toast(start ? 'task set, Dream-1 started' : 'task set (paused)');
+}
+
+$('task').addEventListener('input', () => ($('chars').textContent = $('task').value.length));
+$('task').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); setTask(e.metaKey || e.ctrlKey); }
+});
+$('setBtn').onclick = () => setTask(false);
+$('setStartBtn').onclick = () => setTask(true);
+$('holdBtn').onclick = () => post('/api/release');
+$('presets').onclick = (e) => { const c = e.target.closest('.chip'); if (c) { $('task').value = S.dream.presets[+c.dataset.i]; $('chars').textContent = $('task').value.length; } };
+document.querySelectorAll('[data-cmd]').forEach(b => b.onclick = () => {
+  if (b.dataset.confirm && !confirm(b.dataset.confirm)) return;
+  post('/api/' + b.dataset.cmd);
+});
+document.querySelectorAll('[data-seq]').forEach(b => b.onclick = () => post('/api/sequence/' + b.dataset.seq));
+$('steps').onclick = (e) => { const li = e.target.closest('li'); if (li) post('/api/sequence/arm', { index: +li.dataset.i }); };
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' && !['TEXTAREA', 'INPUT', 'BUTTON'].includes(document.activeElement.tagName)) {
+    e.preventDefault(); post('/api/release');
+  }
+});
+connect();
+</script>
+</body>
+</html>

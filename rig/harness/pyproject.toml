@@ -1,0 +1,48 @@
+[project]
+name = "makermod-harness"
+version = "0.1.0"
+description = "Monitor and control the bimanual MakerMods + Dream-1 rig over LiveKit Portal: cameras, state, prompts, handoffs."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "livekit-portal>=0.3.0",
+    "livekit-api>=0.7",
+    "aiohttp>=3.9",
+    "numpy>=1.24",
+    "opencv-python-headless>=4.10",
+    "python-dotenv>=1",
+]
+
+# `uv run harness` (the service + web UI), `uv run harnessctl ...` (CLI against a running harness),
+# `uv run fake-rig` (a simulated robot + dream-1-tasks for testing without hardware)
+[project.scripts]
+harness = "harness.server:run"
+harnessctl = "harness.cli:main"
+fake-rig = "mock.fake_rig:run"
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["harness", "mock"]
+
+[tool.setuptools.package-data]
+harness = ["static/*", "example_tasks.toml"]
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+filterwarnings = ["ignore::aiohttp.web_exceptions.NotAppKeyWarning"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E731"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["harness", "mock"]
