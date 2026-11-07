@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Maker Arm Remote</title>
+<style>
+  :root {
+    --bg: #f5f5f3; --panel: #ffffff; --line: #e3e2de; --text: #1d1d1b; --muted: #6d6c67;
+    --accent: #2f6fde; --accent-soft: #e6eefc; --ok: #1f8a4c; --ok-soft: #e3f4ea;
+    --warn: #b4540f; --warn-soft: #fbeee2; --bad: #c62f2f; --bad-soft: #fbe6e6;
+    --track: #ecebe7; --radius: 12px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #151514; --panel: #1f1f1d; --line: #33322f; --text: #ecebe6; --muted: #9c9a93;
+      --accent: #6c9cf0; --accent-soft: #23304a; --ok: #4cc283; --ok-soft: #1c3528;
+      --warn: #e59a5b; --warn-soft: #3a2a1c; --bad: #ef7070; --bad-soft: #3e2020; --track: #2c2b28;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; gap: 10px; padding: 14px 20px; flex-wrap: wrap;
+           border-bottom: 1px solid var(--line); background: var(--panel); }
+  h1 { font-size: 16px; margin: 0; font-weight: 650; }
+  .pill { padding: 3px 10px; border-radius: 99px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .pill.off { background: var(--track); color: var(--muted); }
+  .pill.on { background: var(--ok-soft); color: var(--ok); }
+  .pill.fault { background: var(--bad-soft); color: var(--bad); }
+  .pill.me { background: var(--accent-soft); color: var(--accent); }
+  .pill.warn { background: var(--warn-soft); color: var(--warn); }
+  .spacer { flex: 1; }
+  main { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(340px, 1fr); gap: 16px;
+         padding: 16px 20px; max-width: 1400px; margin: 0 auto; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; padding: 12px 16px; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
+  .card h2 { font-size: 13px; margin: 0 0 10px; color: var(--muted); font-weight: 600;
+             text-transform: uppercase; letter-spacing: .04em; }
+  #videos { display: grid; gap: 8px; }
+  .cam { position: relative; background: #000; border-radius: 8px; overflow: hidden; aspect-ratio: 16 / 9; }
+  .cam video { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .cam .label { position: absolute; left: 8px; top: 8px; background: rgba(0,0,0,.55); color: #fff;
+                font-size: 12px; padding: 2px 8px; border-radius: 6px; }
+  .cam-empty { display: grid; place-items: center; color: #aaa; text-align: center; padding: 20px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+  input, select, button { font: inherit; color: var(--text); }
+  input, select { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; max-width: 100%; }
+  button { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 7px 12px;
+           cursor: pointer; font-weight: 550; user-select: none; touch-action: manipulation; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { background: var(--bad-soft); border-color: var(--bad); color: var(--bad); }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; padding: 6px 11px; }
+  .seg button.sel { background: var(--accent-soft); color: var(--accent); }
+  .msg { margin-top: 10px; padding: 8px 10px; border-radius: 8px; background: var(--track); color: var(--muted);
+         min-height: 2.4em; font-size: 13px; }
+  .msg.fault { background: var(--bad-soft); color: var(--bad); }
+  .joint { display: grid; grid-template-columns: 26px 1fr auto; gap: 10px; align-items: center;
+           padding: 9px 8px; border-radius: 8px; cursor: pointer; }
+  .joint + .joint { border-top: 1px solid var(--line); }
+  .joint.sel { background: var(--accent-soft); }
+  .jn { font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .jname { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; text-transform: capitalize; }
+  .jname span:last-child { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .bar { position: relative; height: 6px; border-radius: 3px; background: var(--track); margin-top: 6px; }
+  .bar .pos { position: absolute; top: -3px; width: 4px; height: 12px; border-radius: 2px; background: var(--text);
+              transform: translateX(-2px); transition: left .1s linear; }
+  .bar .tgt { position: absolute; top: -4px; width: 10px; height: 14px; border-radius: 4px;
+              border: 2px solid var(--accent); transform: translateX(-5px); }
+  .jbtn { display: flex; gap: 6px; }
+  .jbtn button { width: 40px; height: 36px; padding: 0; font-size: 18px; }
+  .hint, .muted { color: var(--muted); font-size: 12px; }
+  .hint { margin-top: 10px; }
+  kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; font-size: 11px; }
+  .join { max-width: 460px; margin: 60px auto; }
+  .join h2 { text-transform: none; font-size: 18px; color: var(--text); letter-spacing: 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Maker Arm · Remote</h1>
+  <span id="conn" class="pill off">Not connected</span>
+  <label for="armSelect" class="muted">Arm</label>
+  <select id="armSelect" disabled></select>
+  <span id="power" class="pill off">—</span>
+  <span id="ctl" class="pill off">Nobody has control</span>
+  <span class="spacer"></span>
+  <button id="btnTake" class="primary" disabled>Take control</button>
+  <button id="btnHold" disabled>Hold</button>
+  <button id="btnPark" class="danger" disabled>Park &amp; power off</button>
+</header>
+
+<section id="joinCard" class="card join">
+  <h2>Join the arm room</h2>
+  <p class="muted">You'll see the arm camera and can drive the arms when you have control. Powering the motors on is done on the arm laptop.</p>
+  <div class="row">
+    <input id="name" placeholder="Your name" maxlength="24">
+    <button id="btnJoin" class="primary">Join</button>
+  </div>
+  <div id="joinMsg" class="msg" hidden></div>
+</section>
+
+<main id="app" hidden>
+  <section class="card">
+    <h2>Camera</h2>
+    <div id="videos"><div class="cam cam-empty" id="noVideo">Waiting for the arm laptop to share its camera…</div></div>
+    <div class="row muted" id="people">—</div>
+  </section>
+
+  <section class="card">
+    <h2 id="moveTitle">Movement</h2>
+    <div class="row" style="margin-top:0">
+      <span>Step:</span>
+      <div class="seg" id="steps"></div>
+      <span class="spacer"></span>
+      <button id="gripOpen">Open gripper</button>
+      <button id="gripClose">Close gripper</button>
+    </div>
+    <div id="joints" style="margin-top:10px"></div>
+    <div id="msg" class="msg">Connecting…</div>
+    <div class="hint">
+      Keyboard: <kbd>Q</kbd>/<kbd>E</kbd> switch arm · <kbd>1</kbd>–<kbd>7</kbd> pick joint ·
+      <kbd>←</kbd>/<kbd>→</kbd> or <kbd>A</kbd>/<kbd>D</kbd> move · <kbd>Space</kbd> hold.
+      Keep a button pressed to keep moving. Moving needs control; Hold and Park work for everyone.
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let LK = null;
+const SDK_URL = "https://cdn.jsdelivr.net/npm/livekit-client@2.20.2/dist/livekit-client.umd.js";
+function loadSdk() {  // loaded on demand: works both from remote.py and from a static host
+  if (window.LivekitClient) return Promise.resolve(window.LivekitClient);
+  return new Promise((ok, fail) => {
+    const s = document.createElement("script");
+    s.src = SDK_URL;
+    s.onload = () => window.LivekitClient ? ok(window.LivekitClient) : fail(new Error("LiveKit SDK missing"));
+    s.onerror = () => fail(new Error("could not load the LiveKit SDK (no internet?)"));
+    document.head.appendChild(s);
+  });
+}
+// Invite links carry everything after '#': u = LiveKit URL, t = token, n = name, h = host identity.
+// The part after '#' never leaves the browser.
+const invite = Object.fromEntries(new URLSearchParams(location.hash.slice(1)));
+const STEPS = [1, 2, 5, 10];
+let room = null, me = null, host = "arm-host";
+let latest = null, latestAt = 0, armId = null, step = 2, selected = 1, built = false;
+const enc = new TextEncoder(), dec = new TextDecoder();
+const st = () => latest && latest.arms && latest.arms[armId];
+const iHaveControl = () => latest && latest.controller === me;
+
+// ---------- join ----------
+const params = new URLSearchParams(location.search);
+let savedName = null; try { savedName = localStorage.getItem("remoteName"); } catch (e) {}
+$("name").value = savedName || params.get("name") || "";
+$("btnJoin").onclick = join;
+$("name").addEventListener("keydown", e => { if (e.key === "Enter") join(); });
+if (invite.t) {  // opened from an invite link: the name is fixed by the link
+  $("name").hidden = true;
+  $("btnJoin").textContent = `Join as ${invite.n || "guest"}`;
+}
+
+async function getToken(name) {
+  if (invite.t) {
+    return { url: invite.u, token: invite.t, name: invite.n || "guest", host: invite.h || "arm-host",
+             identity: identityFromToken(invite.t) };
+  }
+  let r;
+  try { r = await fetch("/api/token?name=" + encodeURIComponent(name)); } catch (e) { r = null; }
+  if (!r || !r.ok) throw new Error("this page needs an invite link from the arm laptop (Team box → Invite)");
+  return r.json();
+}
+function identityFromToken(tok) {  // the JWT's "sub" is our identity in the room
+  try {
+    const b = tok.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+    return JSON.parse(atob(b + "===".slice((b.length + 3) % 4))).sub;
+  } catch (e) { return null; }
+}
+
+async function join() {
+  const name = $("name").value.trim() || "guest";
+  try { localStorage.setItem("remoteName", name); } catch (e) {}
+  $("btnJoin").disabled = true;
+  try {
+    LK = await loadSdk();
+    const t = await getToken(name);
+    me = t.identity; host = t.host;
+    room = new LK.Room({ adaptiveStream: true, dynacast: true });
+    room.on(LK.RoomEvent.TrackSubscribed, onTrack);
+    room.on(LK.RoomEvent.TrackUnsubscribed, (track) => { track.detach().forEach(el => el.closest(".cam")?.remove()); emptyCheck(); });
+    room.on(LK.RoomEvent.DataReceived, onData);
+    room.on(LK.RoomEvent.ParticipantConnected, renderPeople);
+    room.on(LK.RoomEvent.ParticipantDisconnected, renderPeople);
+    room.on(LK.RoomEvent.Disconnected, () => setConn("Disconnected", "fault"));
+    room.on(LK.RoomEvent.Reconnecting, () => setConn("Reconnecting…", "warn"));
+    room.on(LK.RoomEvent.Reconnected, () => setConn("Connected as " + t.name, "on"));
+    await room.connect(t.url, t.token);
+    setConn("Connected as " + t.name, "on");
+    $("joinCard").hidden = true; $("app").hidden = false;
+    showMsg("Connected. Waiting for the arm laptop…");
+    renderPeople();
+    setInterval(staleCheck, 1000);
+    // heartbeat while in control: if this tab dies or loses the network, the arm host
+    // releases control within 5 s and the arms hold
+    setInterval(() => { if (iHaveControl()) send({ cmd: "ping" }); }, 1000);
+  } catch (e) {
+    $("joinMsg").hidden = false; $("joinMsg").className = "msg fault";
+    const expired = /401|expired|token/i.test(e.message) && invite.t;
+    $("joinMsg").textContent = "Could not join: " + (expired ? "this invite link has expired; ask for a new one" : e.message);
+    $("btnJoin").disabled = false;
+  }
+}
+function setConn(text, cls) { $("conn").textContent = text; $("conn").className = "pill " + cls; }
+
+// ---------- video ----------
+function onTrack(track, pub, participant) {
+  if (track.kind !== "video") return;
+  $("noVideo")?.remove();
+  const box = document.createElement("div"); box.className = "cam";
+  const el = track.attach(); el.muted = true; el.playsInline = true;
+  const label = document.createElement("span"); label.className = "label";
+  label.textContent = participant.name || participant.identity;
+  box.append(el, label); $("videos").appendChild(box);
+}
+function emptyCheck() {
+  if (!$("videos").querySelector(".cam")) {
+    $("videos").innerHTML = '<div class="cam cam-empty" id="noVideo">Waiting for the arm laptop to share its camera…</div>';
+  }
+}
+function renderPeople() {
+  if (!room) return;
+  const names = [...room.remoteParticipants.values()]
+    .filter(p => p.identity !== host && p.identity !== "arm-camera").map(p => p.name || p.identity);
+  $("people").textContent = names.length ? "Also here: " + names.join(", ") : "Only you here (plus the arm laptop).";
+}
+
+// ---------- data from the arm host ----------
+function onData(payload, participant, kind, topic) {
+  if (!participant || participant.identity !== host) return;
+  let data; try { data = JSON.parse(dec.decode(payload)); } catch (e) { return; }
+  if (topic === "arm/reply") { showMsg(data.msg); return; }
+  if (topic !== "arm/state") return;
+  latest = data; latestAt = Date.now();
+  if (!built) build();
+  render();
+}
+function staleCheck() {
+  if (!latest || Date.now() - latestAt > 3000) {
+    $("power").textContent = "arm laptop offline"; $("power").className = "pill fault";
+    enableControls(false);
+    if (latest) showMsg("No updates from the arm laptop. Is `web_app.py --livekit` running there?", true);
+  }
+}
+
+// ---------- commands ----------
+async function send(body) {
+  if (!room) return;
+  try {
+    await room.localParticipant.publishData(enc.encode(JSON.stringify({ ...body, arm: armId })),
+      { reliable: true, topic: "arm/cmd", destinationIdentities: [host] });
+  } catch (e) { showMsg("Send failed: " + e.message, true); }
+}
+let lastJog = 0;
+function jog(joint, dir) {
+  if (!iHaveControl()) { showMsg(latest && latest.controller ? `${latest.controller} has control.` : "Press Take control first."); return; }
+  if (!st() || !st().on) { showMsg(`The ${armId} arm is off. It's powered on from the arm laptop.`); return; }
+  const now = performance.now();
+  if (now - lastJog < 250) return;
+  lastJog = now;
+  send({ cmd: "jog", joint, deg: dir * step });
+}
+$("btnTake").onclick = () => send({ cmd: iHaveControl() ? "release" : "take" });
+$("btnHold").onclick = () => send({ cmd: "hold" });
+$("btnPark").onclick = () => {
+  if (confirm(`Park the ${armId} arm? It walks back to its start pose and switches its motors off.`)) send({ cmd: "park" });
+};
+
+// ---------- UI ----------
+function showMsg(text, fault = false) { const m = $("msg"); m.textContent = text || ""; m.classList.toggle("fault", fault); }
+function build() {
+  const info = latest.info;
+  const ok = info.arms.filter(a => a.ok);
+  let saved = null; try { saved = localStorage.getItem("remoteArm"); } catch (e) {}
+  armId = (ok.find(a => a.id === saved) || ok[0] || info.arms[0]).id;
+  $("armSelect").innerHTML = info.arms.map(a => `<option value="${a.id}" ${a.ok ? "" : "disabled"}>${a.id}</option>`).join("");
+  $("armSelect").value = armId; $("armSelect").disabled = false;
+  $("armSelect").onchange = (e) => chooseArm(e.target.value);
+  $("steps").innerHTML = STEPS.filter(s => s <= info.max_step).map(s => `<button data-s="${s}">${s}°</button>`).join("");
+  $("steps").querySelectorAll("button").forEach(b => b.onclick = () => { step = +b.dataset.s; markStep(); });
+  markStep();
+  $("joints").innerHTML = info.joints.map(j => `
+    <div class="joint ${j.n === selected ? "sel" : ""}" data-n="${j.n}">
+      <div class="jn">J${j.n}</div>
+      <div>
+        <div class="jname"><span>${j.name}</span><span id="val${j.n}">—</span></div>
+        <div class="bar"><div class="tgt" id="tgt${j.n}" hidden></div><div class="pos" id="pos${j.n}"></div></div>
+      </div>
+      <div class="jbtn">
+        <button data-j="${j.n}" data-d="-1" aria-label="J${j.n} minus">−</button>
+        <button data-j="${j.n}" data-d="1" aria-label="J${j.n} plus">+</button>
+      </div>
+    </div>`).join("");
+  $("joints").querySelectorAll(".joint").forEach(r => r.addEventListener("click", () => select(+r.dataset.n)));
+  $("joints").querySelectorAll("button[data-j]").forEach(b => holdToRepeat(b, () => jog(+b.dataset.j, +b.dataset.d)));
+  holdToRepeat($("gripOpen"), () => jog(7, -1));
+  holdToRepeat($("gripClose"), () => jog(7, 1));
+  chooseArm(armId);
+  built = true;
+}
+function markStep() { $("steps").querySelectorAll("button").forEach(b => b.classList.toggle("sel", +b.dataset.s === step)); }
+function chooseArm(id) {
+  armId = id; $("armSelect").value = id;
+  $("moveTitle").textContent = `Movement · ${id} arm`;
+  try { localStorage.setItem("remoteArm", id); } catch (e) {}
+  if (latest) render();
+}
+function cycleArm(dir) {
+  const ok = latest.info.arms.filter(a => a.ok);
+  const i = ok.findIndex(a => a.id === armId);
+  chooseArm(ok[(i + dir + ok.length) % ok.length].id);
+}
+function select(n) {
+  selected = n;
+  document.querySelectorAll(".joint").forEach(r => r.classList.toggle("sel", +r.dataset.n === n));
+}
+function holdToRepeat(el, fn) {
+  let timer = null;
+  const stop = () => { clearTimeout(timer); clearInterval(timer); timer = null; };
+  el.addEventListener("pointerdown", (e) => {
+    e.preventDefault(); e.stopPropagation(); fn();
+    timer = setTimeout(() => { timer = setInterval(fn, 300); }, 400);
+  });
+  ["pointerup", "pointerleave", "pointercancel"].forEach(ev => el.addEventListener(ev, stop));
+  el.addEventListener("click", (e) => e.stopPropagation());
+}
+function enableControls(canMove) {
+  $("btnTake").disabled = !latest;
+  $("btnHold").disabled = $("btnPark").disabled = !(st() && st().on);
+  document.querySelectorAll("button[data-j], #gripOpen, #gripClose").forEach(b => b.disabled = !canMove);
+}
+function pct(j, v) { return Math.min(100, Math.max(0, (v - j.lo) / (j.hi - j.lo) * 100)); }
+function render() {
+  const s = st(), ctl = latest.controller;
+  // control badge
+  $("ctl").textContent = ctl === me ? "You have control" : ctl ? `${ctl} has control` : "Nobody has control";
+  $("ctl").className = "pill " + (ctl === me ? "me" : ctl ? "warn" : "off");
+  $("btnTake").textContent = ctl === me ? "Release control" : "Take control";
+  // arm labels with status
+  [...$("armSelect").options].forEach(o => {
+    const a = latest.arms[o.value];
+    const status = !a ? "" : a.offline ? "not responding" : a.state === "FAULT" ? "FAULT" : a.on ? "on" : "off";
+    o.textContent = `${o.value} · ${status}`;
+  });
+  if (!s) return;
+  const on = !!s.on, fault = s.state === "FAULT", offline = !!s.offline;
+  $("power").textContent = offline ? "Not responding" : fault ? "FAULT" : on ? "On" : "Off (power on at the arm laptop)";
+  $("power").className = "pill " + (fault || offline ? "fault" : on ? "on" : "off");
+  enableControls(on && ctl === me);
+  if (offline) { showMsg(`The ${armId} arm is not responding: ${s.error || ""}`, true); return; }
+  latest.info.joints.forEach((j, i) => {
+    const v = s.joints_deg[i], temp = s.temps_c && s.temps_c[i];
+    const hot = Number.isFinite(temp) && temp >= 60;
+    const val = $("val" + j.n);
+    val.textContent = (Number.isFinite(v) ? v.toFixed(1) + "°" : "—") + (hot ? `  ·  ${temp.toFixed(0)}°C` : "");
+    val.style.color = !hot ? "" : temp > 70 ? "var(--bad)" : "var(--warn)";
+    if (Number.isFinite(v)) $("pos" + j.n).style.left = pct(j, v) + "%";
+    const t = s.targets_deg && s.targets_deg[i], tg = $("tgt" + j.n);
+    tg.hidden = !(on && Number.isFinite(t));
+    if (!tg.hidden) tg.style.left = pct(j, t) + "%";
+  });
+  if (fault) showMsg("FAULT: " + (s.fault || "unknown") + " — cleared on the arm laptop.", true);
+}
+
+document.addEventListener("keydown", (e) => {
+  if (!built || ["SELECT", "INPUT"].includes(e.target.tagName)) return;
+  const k = e.key.toLowerCase();
+  if (e.repeat && !["arrowleft", "arrowright", "a", "d"].includes(k)) return;
+  if (/^[1-7]$/.test(k)) select(+k);
+  else if (k === "q") cycleArm(-1);
+  else if (k === "e") cycleArm(1);
+  else if (k === "arrowleft" || k === "a") { e.preventDefault(); jog(selected, -1); }
+  else if (k === "arrowright" || k === "d") { e.preventDefault(); jog(selected, 1); }
+  else if (k === " ") { e.preventDefault(); send({ cmd: "hold" }); }
+});
+</script>
+</body>
+</html>
