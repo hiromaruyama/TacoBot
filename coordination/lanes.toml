@@ -1,0 +1,37 @@
+# Lane ownership. SHARED file — change only via a `shared/<what>` branch.
+# A branch named <prefix>/<task> belongs to that lane.
+
+# Nobody edits these. upstream/ is the portal-makermods submodule (pinned commit).
+readonly = ["upstream/**"]
+
+# Change only on a shared/<what> branch (bumping the upstream pin included).
+shared = [
+  "AGENTS.md",
+  "CLAUDE.md",
+  "coordination/lanes.toml",
+  ".gitmodules",
+  "upstream",
+]
+
+# Anyone may touch these without a claim.
+free = ["coordination/claims/**"]
+
+[lanes.tasks]       # what the robot is asked to do, and in what order
+prefix = "tasks/"
+paths = ["tacobot/**", "tests/test_sequencer*.py"]
+
+[lanes.rig]         # physical setup: griddle, cameras, calibration, .env notes, safety checklist
+prefix = "rig/"
+paths = ["rig/**"]
+
+[lanes.data]        # recordings, dataset conversion, ACT training notes
+prefix = "data/"
+paths = ["data/**"]
+
+[lanes.infra]       # tooling for the team
+prefix = "infra/"
+paths = [".github/**", "scripts/**", ".claude/**", "Makefile", "pyproject.toml", "README.md", "tests/test_claims*.py", ".gitignore"]
+
+[lanes.shared]
+prefix = "shared/"
+paths = []

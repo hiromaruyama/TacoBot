@@ -1,0 +1,47 @@
+# lane: tasks — the quesadilla, one Dream-1 prompt per step.
+# Keep prompts short and concrete (one instruction, < 200 chars). Tune the wording from real runs.
+#
+# Step kinds:
+#   prompt = "..."   Dream-1 does it. A human starts it and says when it's done.
+#   wait_s = N       nobody moves; the arms hold while the food cooks.
+#   home = true      the robot walks both arms back to rest and holds there (never parks).
+
+[[step]]
+id = "tortilla"
+prompt = "pick up the tortilla and lay it flat in the middle of the griddle"
+
+[[step]]
+id = "cheese"
+prompt = "pick up the cheese cup and pour the cheese onto the left half of the tortilla"
+
+[[step]]
+id = "filling"
+prompt = "pick up the filling cup and pour it onto the cheese"
+
+[[step]]
+id = "melt"
+wait_s = 20
+
+[[step]]
+id = "fold"
+prompt = "pick up the spatula and fold the right half of the tortilla over the left half"
+
+[[step]]
+id = "cook_side_1"
+wait_s = 60
+
+[[step]]
+id = "flip"
+prompt = "slide the spatula under the quesadilla and flip it over"
+
+[[step]]
+id = "cook_side_2"
+wait_s = 45
+
+[[step]]
+id = "plate"
+prompt = "slide the spatula under the quesadilla and move it onto the plate"
+
+[[step]]
+id = "home"
+home = true

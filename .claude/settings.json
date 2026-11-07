@@ -1,0 +1,48 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 scripts/claims.py:*)",
+      "Bash(python scripts/claims.py:*)",
+      "Bash(make check)",
+      "Bash(make plan)",
+      "Bash(pytest:*)",
+      "Bash(git status)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git fetch:*)",
+      "Bash(git checkout -b:*)",
+      "Bash(git pull --rebase:*)",
+      "Bash(git submodule update --init)"
+    ],
+    "deny": [
+      "Bash(git push --force origin main)",
+      "Bash(git push -f origin main)",
+      "Bash(make cook:*)",
+      "Bash(uv run robot:*)",
+      "Bash(uv run teleoperator:*)",
+      "Bash(uv run dream-1:*)",
+      "Bash(uv run dream-1-tasks:*)",
+      "Bash(uv run act:*)",
+      "Read(./upstream/.env)",
+      "Read(./.env)",
+      "Read(./.env.*)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/claims.py\" status" }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/claims.py\" hook" }
+        ]
+      }
+    ]
+  }
+}

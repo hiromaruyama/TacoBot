@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: true }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install pytest ruff
+      - run: ruff check tacobot tests scripts
+      - run: pytest -q
+      - run: python tacobot/sequencer.py --dry-run
+
+  claims:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Branch must use a lane prefix
+        run: |
+          b="${{ github.head_ref }}"
+          echo "$b" | grep -Eq '^(tasks|rig|data|infra|shared)/' \
+            || { echo "::error::Branch '$b' must start with a lane prefix (see AGENTS.md)"; exit 1; }
+      - name: Shared files only on shared/ branches
+        run: |
+          b="${{ github.head_ref }}"
+          changed=$(git diff --name-only origin/main...HEAD)
+          shared=$(python -c "import tomllib;print('\n'.join(tomllib.load(open('coordination/lanes.toml','rb'))['shared']))")
+          if [[ "$b" != shared/* ]]; then
+            for f in $changed; do
+              if echo "$shared" | grep -qx "$f"; then
+                echo "::error file=$f::SHARED file changed on a non-shared branch"; exit 1
+              fi
+            done
+          fi
+      - name: No overlap with other open branches
+        run: |
+          git checkout -B "${{ github.head_ref }}"
+          python scripts/claims.py check --changed
+      - name: Ready PR must have released its claim
+        if: github.event.pull_request.draft == false
+        run: |
+          f="coordination/claims/$(echo '${{ github.head_ref }}' | sed 's#/#__#g').toml"
+          if [ -f "$f" ]; then
+            echo "::error file=$f::Run 'python3 scripts/claims.py release' before marking the PR ready"; exit 1
+          fi

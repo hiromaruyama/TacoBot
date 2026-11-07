@@ -1,0 +1,11 @@
+# Owners must approve PRs touching their lane.
+# Uncomment and replace @teammate-* with real GitHub usernames once people pick lanes.
+*                          @hiromaruyama
+
+# /tacobot/                  @teammate-tasks
+# /rig/                      @teammate-rig
+# /data/                     @teammate-data
+
+# SHARED — the whole team should look
+# /AGENTS.md                 @hiromaruyama @teammate-tasks @teammate-rig
+# /.gitmodules               @hiromaruyama
