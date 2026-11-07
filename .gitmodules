@@ -1,4 +1,4 @@
 [submodule "upstream"]
 	path = upstream
-	url = https://github.com/livekit-examples/portal-makermods
-	branch = dc/maker_arm
+	url = https://github.com/AMSANDNV/portal-makermods
+	branch = amsand/basiccontrol

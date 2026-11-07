@@ -103,10 +103,24 @@ def _config(speed_deg_s: float, rate_hz: float | None) -> ArmConfig:
     if not 0 < speed_deg_s <= MAX_SPEED_DEG_S:
         raise SystemExit(f"speed must be in (0, {MAX_SPEED_DEG_S:g}] deg/s")
     cfg = ArmConfig.from_yaml(str(DEFAULT_ARM_CONFIG))
+    # A flaky candleLight on a shared hub returns fault-status replies ~0.76s late, right at the
+    # default 0.75s health deadline (2*fault_poll_interval + feedback_timeout). Widen only the
+    # fault-status poll interval (MAKER_FAULT_POLL_S, default 0.5 -> ~1.25s deadline) so borderline
+    # replies get through; position-feedback safety (feedback_timeout) stays tight at its default.
+    fault_poll = float(os.environ.get("MAKER_FAULT_POLL_S") or 0.5)
+    # Over-temperature protection on the arm joints (J1-J6). The profile only caps the gripper, so
+    # a loaded shoulder/elbow holding against gravity could cook with nothing stopping it. Give the
+    # arm joints a stop limit (MAKER_MOTOR_TEMP_STOP_C, default 85 C): the SDK's health check faults
+    # and holds if any reaches it. (Warning at MAKER_MOTOR_TEMP_WARN_C is printed by the tools.)
+    stop_c = float(os.environ.get("MAKER_MOTOR_TEMP_STOP_C") or 85.0)
+    joints = tuple(replace(j, max_temperature_c=stop_c) if j.max_temperature_c is None else j
+                   for j in cfg.joints)
     cfg = replace(
         cfg,
         control_rate_hz=rate_hz or cfg.control_rate_hz,
         max_velocity=math.radians(speed_deg_s),
+        fault_poll_interval=fault_poll,
+        joints=joints,
     )
     cfg._validate()
     return cfg
@@ -124,6 +138,18 @@ def open_arm(port: str | None = None, sim: bool = False, speed_deg_s: float = DE
     if is_candle_port(port):
         # candleLight (gs_usb) over USB: buffered, so a moderate loop rate is safe.
         return Arm(_config(speed_deg_s, rate_hz=50.0), CandleBackend(index=candle_index(port)))
+    if port.startswith("can") or port.startswith("socketcan:"):
+        # Linux SocketCAN (e.g. can0): a candleLight adapter the kernel already bound. Bring it up at
+        # 1 Mbps first (`sudo ip link set can0 up type can bitrate 1000000`). 25 Hz (not 50) because a
+        # candleLight on a shared/loaded USB hub drops fault-status replies at 50 Hz.
+        channel = port.split(":", 1)[1] if ":" in port else port
+        backend = create_backend("socketcan", channel=channel)
+        # Pace like the SLCAN path: wait for each motor's reply before commanding the next, so a burst
+        # of 7 commands can't overflow a candleLight's tiny CAN RX FIFO (which is what drops the
+        # fault-status replies). This is exactly why the SLCAN CANable never faults here.
+        backend.feedback_paced_control = True
+        backend.feedback_wait_timeout = 0.015
+        return Arm(_config(speed_deg_s, rate_hz=25.0), backend)
     # Serial SLCAN is verified at 25 Hz in the SDK (see its README).
     backend = create_backend("slcan", port=port, baudrate=115200, rtscts=False, startup_delay=2.5)
     return Arm(_config(speed_deg_s, rate_hz=25.0), backend)
