@@ -10,7 +10,7 @@ if [ "$branch" = "main" ]; then
   echo "❌ Don't push to main directly. Open a PR from a <lane>/<task> branch." >&2
   exit 1
 fi
-python3 scripts/claims.py check --changed || {
+uv run --quiet --no-project --python 3.12 python scripts/claims.py check --changed || {
   echo "❌ Your branch overlaps another branch (see above). Coordinate, or push with --no-verify ONLY if the owner agreed." >&2
   exit 1
 }

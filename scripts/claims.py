@@ -22,8 +22,20 @@ import json
 import os
 import subprocess
 import sys
-import tomllib
-from pathlib import Path
+
+HOOK_FAILED = ("BLOCKED: the TacoBot claims hook crashed, so this edit can't be verified ({why}). "
+               "Failing closed. Tell the human; don't work around it.")
+
+# tomllib is 3.11+. Keep this module parseable on older Pythons so this guard runs.
+if sys.version_info < (3, 11):  # noqa: UP036 — deliberate: macOS /usr/bin/python3 is 3.9
+    if "hook" in sys.argv:
+        print(HOOK_FAILED.format(why=f"Python {sys.version.split()[0]} < 3.11; run it via `uv run --python 3.12`"),
+              file=sys.stderr)
+        sys.exit(2)
+    sys.exit(f"claims.py needs Python 3.11+ (got {sys.version.split()[0]}). Use: uv run --python 3.12 python ...")
+
+import tomllib  # noqa: E402
+from pathlib import Path  # noqa: E402
 
 MAIN = "main"
 CLAIMS_DIR = "coordination/claims"
@@ -282,9 +294,10 @@ def cmd_hook(args) -> int:
     """PreToolUse hook. exit 2 = block the edit and show stderr to Claude."""
     try:
         payload = json.load(sys.stdin)
-    except json.JSONDecodeError:
-        return 0
-    fp = (payload.get("tool_input") or {}).get("file_path") or (payload.get("tool_input") or {}).get("notebook_path")
+    except json.JSONDecodeError as e:
+        print(HOOK_FAILED.format(why=f"unreadable hook input: {e}"), file=sys.stderr)
+        return 2
+    fp =(payload.get("tool_input") or {}).get("file_path") or (payload.get("tool_input") or {}).get("notebook_path")
     if not fp:
         return 0
     root = repo_root()
@@ -341,6 +354,9 @@ def main(argv: list[str] | None = None) -> int:
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except RuntimeError as e:
+    except Exception as e:  # noqa: BLE001 — any crash in the hook must block (exit 2), never allow (0/1)
+        if "hook" in sys.argv:
+            print(HOOK_FAILED.format(why=f"{type(e).__name__}: {e}"), file=sys.stderr)
+            sys.exit(2)
         print(f"claims.py: {e}", file=sys.stderr)
-        sys.exit(0 if "hook" in sys.argv else 1)
+        sys.exit(1)

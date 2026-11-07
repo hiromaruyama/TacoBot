@@ -113,6 +113,36 @@ def test_claude_hook_blocks(team):
     assert hook(a, "tacobot/tasks.toml").returncode == 0             # owner may edit
 
 
+def test_hook_fails_closed_on_bad_input(team):
+    a, _ = team
+    sh(a, "git", "checkout", "-qb", "tasks/x")
+    r = cli(a, "hook", stdin="not json")
+    assert r.returncode == 2 and "Failing closed" in r.stderr
+
+
+def test_hook_fails_closed_on_crash(tmp_path):
+    # Not a git repo -> git rev-parse fails inside the hook. Used to exit 0 (edit allowed).
+    r = sh(tmp_path, sys.executable, str(SCRIPT), "hook", check=False,
+           stdin=json.dumps({"tool_input": {"file_path": str(tmp_path / "x.py")}}))
+    assert r.returncode == 2 and "Failing closed" in r.stderr
+
+
+def _old_python() -> str | None:
+    for exe in ("/usr/bin/python3", shutil.which("python3.10"), shutil.which("python3.9")):
+        if exe and Path(exe).exists():
+            v = subprocess.run([exe, "-c", "import sys; print(sys.version_info < (3, 11))"],
+                               capture_output=True, text=True)
+            if v.stdout.strip() == "True":
+                return exe
+    return None
+
+
+@pytest.mark.skipif(_old_python() is None, reason="no Python < 3.11 available")
+def test_hook_fails_closed_on_old_python():
+    r = subprocess.run([_old_python(), str(SCRIPT), "hook"], input="{}", capture_output=True, text=True, cwd=ROOT)
+    assert r.returncode == 2 and "Failing closed" in r.stderr
+
+
 def test_release(team):
     a, _ = team
     sh(a, "git", "checkout", "-qb", "data/log")
