@@ -59,8 +59,8 @@
   .msg { margin-top: 10px; padding: 8px 10px; border-radius: 8px; background: var(--track); color: var(--muted);
          min-height: 2.4em; font-size: 13px; }
   .msg.fault { background: var(--bad-soft); color: var(--bad); }
-  .joint { display: grid; grid-template-columns: 26px 1fr auto; gap: 10px; align-items: center;
-           padding: 9px 8px; border-radius: 8px; cursor: pointer; }
+  .joint { display: grid; grid-template-columns: 26px 1fr; gap: 10px; align-items: center;
+           padding: 9px 8px; border-radius: 8px; }
   .joint + .joint { border-top: 1px solid var(--line); }
   .joint.sel { background: var(--accent-soft); }
   .jn { font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -71,6 +71,23 @@
               transform: translateX(-2px); transition: left .1s linear; }
   .bar .tgt { position: absolute; top: -4px; width: 10px; height: 14px; border-radius: 4px;
               border: 2px solid var(--accent); transform: translateX(-5px); }
+  .sticks { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+  .sticks.off .stick { opacity: .45; }
+  .stickbox { text-align: center; min-width: 0; }
+  .sticktitle { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+  .stick { position: relative; width: 100%; max-width: 150px; aspect-ratio: 1; margin: 0 auto; border-radius: 50%;
+           background: radial-gradient(circle, var(--panel) 0 28%, var(--track) 29%); border: 1px solid var(--line);
+           touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none; }
+  .stick:active { cursor: grabbing; }
+  .knob { position: absolute; left: 32%; top: 32%; width: 36%; height: 36%; border-radius: 50%; background: var(--accent);
+          box-shadow: 0 2px 6px rgba(0,0,0,.25); transition: transform .05s linear; pointer-events: none; }
+  .ax { position: absolute; font-size: 10px; color: var(--muted); font-weight: 600; pointer-events: none; }
+  .ax.up { top: 5px; left: 50%; transform: translateX(-50%); }
+  .ax.down { bottom: 5px; left: 50%; transform: translateX(-50%); }
+  .ax.left { left: 6px; top: 50%; transform: translateY(-50%); }
+  .ax.right { right: 6px; top: 50%; transform: translateY(-50%); }
+  .stickkeys { margin-top: 6px; }
+  .stickhelp { font-size: 11px; color: var(--muted); text-transform: capitalize; margin-top: 2px; }
   .jbtn { display: flex; gap: 6px; }
   .jbtn button { width: 40px; height: 36px; padding: 0; font-size: 18px; }
   .hint { color: var(--muted); font-size: 12px; margin-top: 10px; }
@@ -138,27 +155,22 @@
 
   <section class="card">
     <h2 id="moveTitle">Movement</h2>
-    <div class="row" style="margin-top:0">
-      <span>Step:</span>
-      <div class="seg" id="steps"></div>
-      <span class="spacer"></span>
-      <button id="gripOpen">Open gripper</button>
-      <button id="gripClose">Close gripper</button>
-    </div>
+    <div id="teleop"></div>
     <div id="joints" style="margin-top:10px"></div>
     <div id="msg" class="msg">Connecting…</div>
     <div class="hint">
-      Keyboard: <kbd>Q</kbd>/<kbd>E</kbd> switch arm · <kbd>1</kbd>–<kbd>7</kbd> pick joint ·
-      <kbd>←</kbd>/<kbd>→</kbd> or <kbd>A</kbd>/<kbd>D</kbd> move · <kbd>Space</kbd> hold.
-      Keep a button pressed to keep moving.
+      Keyboard (hold keys, several at once): <kbd>A</kbd><kbd>D</kbd> base · <kbd>W</kbd><kbd>S</kbd> shoulder ·
+      <kbd>I</kbd><kbd>K</kbd> elbow · <kbd>J</kbd><kbd>L</kbd> wrist yaw · <kbd>↑</kbd><kbd>↓</kbd> wrist flex ·
+      <kbd>←</kbd><kbd>→</kbd> wrist roll · <kbd>Z</kbd>/<kbd>X</kbd> open/close gripper ·
+      hold <kbd>Shift</kbd> for precise · <kbd>Space</kbd> stop · <kbd>Q</kbd>/<kbd>E</kbd> switch arm.
+      Drag a joystick (touch works too); let go and the arm stops.
     </div>
   </section>
 </main>
 
 <script>
 const $ = (id) => document.getElementById(id);
-const STEPS = [1, 2, 5, 10];
-let info = null, step = 2, selected = 1, armId = null;
+let info = null, armId = null;
 const states = {};            // latest state per arm id
 const st = () => states[armId];
 
@@ -206,6 +218,7 @@ function refreshArmLabels() {
 function chooseArm(id) {
   const a = info.arms.find(x => x.id === id);
   if (!a || !a.ok) return;
+  if (armId && id !== armId) Teleop.stop();  // the old arm holds before we switch
   armId = id;
   $("armSelect").value = id;
   $("moveTitle").textContent = `Movement · ${id} arm`;
@@ -233,54 +246,186 @@ function showMsg(text, fault = false) {
   const m = $("msg"); m.textContent = text || ""; m.classList.toggle("fault", fault);
 }
 
-function renderSteps() {
-  $("steps").innerHTML = STEPS.filter(s => s <= info.max_step)
-    .map(s => `<button data-s="${s}" class="${s === step ? "sel" : ""}">${s}°</button>`).join("");
-  $("steps").querySelectorAll("button").forEach(b => b.onclick = () => { step = +b.dataset.s; renderSteps(); });
-}
-
 function renderJoints() {
   $("joints").innerHTML = info.joints.map(j => `
-    <div class="joint ${j.n === selected ? "sel" : ""}" data-n="${j.n}">
+    <div class="joint" data-n="${j.n}">
       <div class="jn">J${j.n}</div>
       <div>
         <div class="jname"><span>${j.name}</span><span id="val${j.n}">—</span></div>
         <div class="bar"><div class="tgt" id="tgt${j.n}" hidden></div><div class="pos" id="pos${j.n}"></div></div>
       </div>
-      <div class="jbtn">
-        <button data-j="${j.n}" data-d="-1" aria-label="J${j.n} minus">−</button>
-        <button data-j="${j.n}" data-d="1" aria-label="J${j.n} plus">+</button>
-      </div>
     </div>`).join("");
-  $("joints").querySelectorAll(".joint").forEach(row =>
-    row.addEventListener("click", () => select(+row.dataset.n)));
-  $("joints").querySelectorAll("button[data-j]").forEach(b =>
-    holdToRepeat(b, () => jog(+b.dataset.j, +b.dataset.d)));
-}
-function select(n) {
-  selected = n;
-  document.querySelectorAll(".joint").forEach(r => r.classList.toggle("sel", +r.dataset.n === n));
-}
-let lastJog = 0;
-function jog(joint, dir) {
-  if (!st() || !st().on) { showMsg(`The ${armId} arm is off: press Power on first.`); return; }
-  const now = performance.now();
-  if (now - lastJog < 250) return;  // at most 4 steps per second (held keys repeat much faster)
-  lastJog = now;
-  send({ cmd: "jog", joint, deg: dir * step });
 }
 
-// press = one step; keep pressing = repeat every 300 ms
-function holdToRepeat(el, fn) {
-  let timer = null;
-  const stop = () => { clearTimeout(timer); clearInterval(timer); timer = null; };
-  el.addEventListener("pointerdown", (e) => {
-    e.preventDefault(); e.stopPropagation(); fn();
-    timer = setTimeout(() => { timer = setInterval(fn, 300); }, 400);
-  });
-  ["pointerup", "pointerleave", "pointercancel"].forEach(ev => el.addEventListener(ev, stop));
-  el.addEventListener("click", (e) => e.stopPropagation());
-}
+// ---------- real-time teleop: on-screen joysticks + held keys (same block in index.html and remote.html) ----------
+// Every 100 ms the joystick deflection / held keys become small relative steps for several joints at
+// once ({cmd:"move", v:{joint: deg}}). The server keeps targets at most 4° ahead of the real arm, and
+// letting go sends "hold", so the arm stops right away. Losing focus (tab switch, blur) also lets go.
+const Teleop = (() => {
+  const TICK_MS = 100, DEADZONE = 0.12;
+  const STICKS = [
+    { title: "Base · Shoulder", x: 1, y: 2, keys: "A D / W S" },
+    { title: "Wrist yaw · Elbow", x: 5, y: 3, keys: "J L / I K" },
+    { title: "Wrist roll · flex", x: 6, y: 4, keys: "← → / ↑ ↓" },
+  ];
+  // key code -> [joint, direction]; codes are layout independent (works on Spanish keyboards too)
+  const KEYS = {
+    KeyA: [1, -1], KeyD: [1, 1], KeyW: [2, 1], KeyS: [2, -1],
+    KeyJ: [5, -1], KeyL: [5, 1], KeyI: [3, 1], KeyK: [3, -1],
+    ArrowLeft: [6, -1], ArrowRight: [6, 1], ArrowUp: [4, 1], ArrowDown: [4, -1],
+    KeyZ: [7, -1], KeyX: [7, 1],  // gripper: Z open, X close
+  };
+  const SPEEDS = [["Slow", 0.25], ["Normal", 0.5], ["Fast", 1]];
+  let hooks = null, maxSpeed = 15, scale = 0.5, moving = false, inflight = false, warned = false;
+  const axes = {}, buttons = {}, keys = new Set(), dragging = new Set();
+  const knobs = [];  // [{el, stick, radius}]
+
+  function shape(v) {  // deadzone + curve: small deflections give fine control
+    const a = Math.abs(v);
+    return a < DEADZONE ? 0 : Math.sign(v) * Math.pow((a - DEADZONE) / (1 - DEADZONE), 1.6);
+  }
+  function keyAxis(j) {
+    let v = 0;
+    for (const k of keys) { const m = KEYS[k]; if (m && m[0] === j) v += m[1]; }
+    return Math.max(-1, Math.min(1, v));
+  }
+  function velocities() {
+    const v = {};
+    for (let j = 1; j <= 7; j++) {
+      const x = Math.max(-1, Math.min(1, (axes[j] || 0) + (buttons[j] || 0) + keyAxis(j)));
+      if (x) v[j] = x;
+    }
+    return v;
+  }
+  function releaseAll() {
+    keys.clear(); dragging.clear();
+    for (const j in axes) axes[j] = 0;
+    for (const j in buttons) buttons[j] = 0;
+    knobs.forEach(k => { k.el.style.transform = ""; });
+  }
+
+  function tick() {
+    if (!hooks) return;
+    const v = velocities();
+    const precise = keys.has("ShiftLeft") || keys.has("ShiftRight");
+    const perTick = maxSpeed * scale * (precise ? 0.4 : 1) * TICK_MS / 1000;
+    const deltas = {};
+    for (const [j, x] of Object.entries(v)) deltas[j] = Math.round(x * perTick * 100) / 100;
+    const any = Object.values(deltas).some(d => d !== 0);
+    const can = hooks.canMove();
+    document.querySelectorAll(".sticks").forEach(el => el.classList.toggle("off", !can));
+    document.querySelectorAll(".joint[data-n]").forEach(r => r.classList.toggle("sel", !!deltas[r.dataset.n]));
+    // keyboard moves the on-screen knobs too, so you see what the keys do
+    knobs.forEach(k => {
+      if (dragging.has(k.stick)) return;
+      const x = keyAxis(k.stick.x), y = keyAxis(k.stick.y), m = Math.hypot(x, y) || 1;
+      k.el.style.transform = x || y ? `translate(${x / m * k.radius()}px, ${-y / m * k.radius()}px)` : "";
+    });
+    if (!any) {
+      warned = false;
+      if (moving && !inflight) { moving = false; hooks.send({ cmd: "hold" }); }  // let go -> stop now
+      return;
+    }
+    if (!can) { if (!warned) { warned = true; hooks.blocked(); } return; }
+    if (inflight) return;  // never queue up moves: skip a tick instead
+    moving = true; inflight = true;
+    Promise.resolve(hooks.send({ cmd: "move", v: deltas })).finally(() => { inflight = false; });
+  }
+
+  function bindStick(el, stick) {
+    const knob = el.querySelector(".knob");
+    const radius = () => el.clientWidth * 0.36;
+    knobs.push({ el: knob, stick, radius });
+    let id = null;
+    const update = (e) => {
+      const r = el.getBoundingClientRect(), R = radius();
+      let dx = (e.clientX - r.left - r.width / 2) / R, dy = -(e.clientY - r.top - r.height / 2) / R;
+      const m = Math.hypot(dx, dy);
+      if (m > 1) { dx /= m; dy /= m; }
+      knob.style.transform = `translate(${dx * R}px, ${-dy * R}px)`;
+      axes[stick.x] = shape(dx); axes[stick.y] = shape(dy);
+    };
+    const end = (e) => {
+      if (e.pointerId !== id) return;
+      id = null; dragging.delete(stick);
+      axes[stick.x] = 0; axes[stick.y] = 0; knob.style.transform = "";
+    };
+    el.addEventListener("pointerdown", (e) => {
+      if (id !== null) return;
+      id = e.pointerId; dragging.add(stick);
+      el.setPointerCapture(id); e.preventDefault(); update(e);
+    });
+    el.addEventListener("pointermove", (e) => { if (e.pointerId === id) update(e); });
+    ["pointerup", "pointercancel", "lostpointercapture"].forEach(ev => el.addEventListener(ev, end));
+  }
+  function bindHoldButton(el, joint, dir) {
+    const stop = () => { buttons[joint] = 0; };
+    el.addEventListener("pointerdown", (e) => { e.preventDefault(); buttons[joint] = dir; });
+    ["pointerup", "pointerleave", "pointercancel"].forEach(ev => el.addEventListener(ev, stop));
+  }
+
+  function build(container, joints, speed) {
+    maxSpeed = speed || 15;
+    try { const s = parseFloat(localStorage.getItem("teleopScale")); if (s > 0) scale = s; } catch (e) {}
+    const name = (n) => (joints.find(j => j.n === n) || {}).name || "J" + n;
+    container.innerHTML = `
+      <div class="row" style="margin-top:0">
+        <span>Speed:</span><div class="seg" id="tSpeed"></div>
+        <span class="spacer"></span>
+        <button id="tGripOpen" title="Z">Open gripper</button>
+        <button id="tGripClose" title="X">Close gripper</button>
+      </div>
+      <div class="sticks">${STICKS.map((s, i) => `
+        <div class="stickbox">
+          <div class="sticktitle">${s.title}</div>
+          <div class="stick" data-i="${i}">
+            <span class="ax up">J${s.y} +</span><span class="ax down">J${s.y} −</span>
+            <span class="ax left">J${s.x} −</span><span class="ax right">J${s.x} +</span>
+            <div class="knob"></div>
+          </div>
+          <div class="stickkeys"><kbd>${s.keys}</kbd></div>
+          <div class="stickhelp">${name(s.x)} ↔ · ${name(s.y)} ↕</div>
+        </div>`).join("")}
+      </div>`;
+    const seg = container.querySelector("#tSpeed");
+    const renderSpeeds = () => {
+      seg.innerHTML = SPEEDS.map(([label, f]) =>
+        `<button data-f="${f}" class="${f === scale ? "sel" : ""}" title="${Math.round(maxSpeed * f)}°/s">${label}</button>`).join("");
+      seg.querySelectorAll("button").forEach(b => b.onclick = () => {
+        scale = +b.dataset.f; try { localStorage.setItem("teleopScale", scale); } catch (e) {} renderSpeeds();
+      });
+    };
+    renderSpeeds();
+    container.querySelectorAll(".stick").forEach(el => bindStick(el, STICKS[+el.dataset.i]));
+    // gripper (J7): closing is the + direction in the Maker Arm profile
+    bindHoldButton(container.querySelector("#tGripOpen"), 7, -1);
+    bindHoldButton(container.querySelector("#tGripClose"), 7, 1);
+  }
+
+  function init(container, joints, speed, h) {
+    hooks = h;
+    build(container, joints, speed);
+    setInterval(tick, TICK_MS);
+    window.addEventListener("blur", releaseAll);
+    document.addEventListener("visibilitychange", () => { if (document.hidden) releaseAll(); });
+    document.addEventListener("keyup", (e) => keys.delete(e.code));
+  }
+  // returns true when the key belongs to teleop (call it from the page's keydown handler)
+  function keydown(e) {
+    if (e.ctrlKey || e.metaKey || e.altKey) return false;
+    if (KEYS[e.code] || e.code === "ShiftLeft" || e.code === "ShiftRight") {
+      keys.add(e.code); e.preventDefault(); return true;
+    }
+    return false;
+  }
+  // stop now (e.g. before switching arm): sends hold if something was moving
+  function stop() {
+    releaseAll();
+    if (moving && hooks) { moving = false; hooks.send({ cmd: "hold" }); }
+  }
+  return { init, keydown, stop, setGripEnabled: (on) => ["tGripOpen", "tGripClose"].forEach(id => {
+    const b = document.getElementById(id); if (b) b.disabled = !on; }) };
+})();
 
 function pct(j, v) { return Math.min(100, Math.max(0, (v - j.lo) / (j.hi - j.lo) * 100)); }
 
@@ -295,8 +440,7 @@ function renderState() {
   $("btnPower").disabled = on || offline || fault;
   $("btnHold").disabled = !on;
   $("btnPark").disabled = !on;
-  $("gripOpen").disabled = $("gripClose").disabled = !on;
-  document.querySelectorAll("button[data-j]").forEach(b => b.disabled = !on);
+  Teleop.setGripEnabled(on);
   if (offline) { showMsg(`The ${armId} arm is not responding: ${s.error || ""}`, true); return; }
   info.joints.forEach((j, i) => {
     const v = s.joints_deg[i];
@@ -337,20 +481,12 @@ $("btnClear").onclick = () => {
   if (confirm(`Clear the fault on the ${armId} arm?\n\nIt first walks back to the pose it had at power-on, then switches the motors off. Keep the path clear.`)) send({ cmd: "clear" });
 };
 $("btnPark").onclick = () => send({ cmd: "park" });
-// gripper (J7): closing is the + direction in the Maker Arm profile
-holdToRepeat($("gripOpen"), () => jog(7, -1));
-holdToRepeat($("gripClose"), () => jog(7, 1));
-
 document.addEventListener("keydown", (e) => {
-  if (e.target.tagName === "SELECT" || e.target.tagName === "INPUT") return;
-  const k = e.key.toLowerCase();
-  if (e.repeat && !["arrowleft", "arrowright", "a", "d"].includes(k)) return;
-  if (/^[1-7]$/.test(k)) select(+k);
-  else if (k === "q") cycleArm(-1);
-  else if (k === "e") cycleArm(1);
-  else if (k === "arrowleft" || k === "a") { e.preventDefault(); jog(selected, -1); }
-  else if (k === "arrowright" || k === "d") { e.preventDefault(); jog(selected, 1); }
-  else if (k === " ") { e.preventDefault(); if (st() && st().on) send({ cmd: "hold" }); }
+  if (!info || e.target.tagName === "SELECT" || e.target.tagName === "INPUT") return;
+  if (Teleop.keydown(e) || e.repeat) return;
+  if (e.code === "KeyQ") cycleArm(-1);
+  else if (e.code === "KeyE") cycleArm(1);
+  else if (e.code === "Space") { e.preventDefault(); Teleop.stop(); if (st() && st().on) send({ cmd: "hold" }); }
 });
 
 // ---------- team: share the camera through LiveKit, see who controls ----------
@@ -436,7 +572,13 @@ $("camSelect").addEventListener("change", () => setTimeout(() => { if (lkPub) sh
   const first = info.arms.find(a => a.ok && a.id === saved) || info.arms.find(a => a.ok);
   armId = first.id;
   renderArmPicker(); chooseArm(armId);
-  renderSteps(); renderJoints(); poll();
+  renderJoints();
+  Teleop.init($("teleop"), info.joints, info.speed, {
+    canMove: () => !!(st() && st().on),
+    send,
+    blocked: () => showMsg(`The ${armId} arm is off: press Power on first.`),
+  });
+  poll();
 })();
 </script>
 </body>

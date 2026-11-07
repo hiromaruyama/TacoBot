@@ -38,7 +38,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 STATIC = HERE / "static"
 OFF_MSG = "Motors off. Press Power on when the area is clear."
 LOCAL = "local"                    # origin of commands from this laptop's page
-REMOTE_ALLOWED = {"jog", "hold", "park"}
+REMOTE_ALLOWED = {"jog", "move", "hold", "park"}
 ANYONE_ALLOWED = {"hold", "park"}  # stop actions: any remote viewer may use them
 CONTROL_IDLE_S = 60.0              # a controller that sends no commands loses control after this long
 HEARTBEAT_S = 5.0                  # ...and one whose page stops sending heartbeats (tab closed, Wi-Fi gone)
@@ -130,8 +130,9 @@ class Control:
 class Hub:
     """All arms + the control lock. Both the local page and LiveKit go through run()."""
 
-    def __init__(self, slots: list[ArmSlot], sim: bool) -> None:
+    def __init__(self, slots: list[ArmSlot], sim: bool, speed: float = DEFAULT_SPEED_DEG_S) -> None:
         self.slots = slots
+        self.speed = speed
         self.by_id = {s.id: s for s in slots}
         self.sim = sim
         self.control = Control()
@@ -148,6 +149,7 @@ class Hub:
 
     def info(self) -> dict:
         return {"arms": [s.info() for s in self.slots], "joints": self.joints, "max_step": MAX_STEP_DEG,
+                "speed": self.speed,
                 "sim": self.sim, "livekit": self.livekit_on}
 
     def team(self) -> dict:
@@ -208,6 +210,11 @@ class Hub:
                     if not math.isfinite(deg):
                         raise ValueError("deg")
                     result = await bridge.run(bridge.jog, joint, deg)
+                elif cmd == "move":  # joysticks / held keys: {"v": {"1": deg, "2": deg, ...}}
+                    deltas = {int(k): float(v) for k, v in dict(msg.get("v") or {}).items()}
+                    if not 0 < len(deltas) <= 7 or not all(math.isfinite(v) for v in deltas.values()):
+                        raise ValueError("v")
+                    result = await bridge.run(bridge.move, deltas)
                 else:
                     return f"unknown cmd {cmd!r}"
             except (TypeError, ValueError):
@@ -216,7 +223,7 @@ class Hub:
                 result = f"error: {exc}"
         who = "" if origin == LOCAL else f" ({origin})"
         bridge.last_msg = result + who
-        if cmd != "jog" or origin != LOCAL:
+        if cmd != "move" and (cmd != "jog" or origin != LOCAL):  # moves arrive 10x/s: don't log them
             print(f"[web] {slot.id} {cmd}{who}: {result}")
         return result
 
@@ -426,7 +433,7 @@ def main() -> None:
     print(f"[web] open {url}   (Ctrl-C to park and quit)")
     if not a.no_browser:
         webbrowser.open(url)
-    web.run_app(make_app(Hub(slots, a.sim), a.livekit), host="127.0.0.1", port=a.http_port, print=None)
+    web.run_app(make_app(Hub(slots, a.sim, a.speed), a.livekit), host="127.0.0.1", port=a.http_port, print=None)
 
 
 if __name__ == "__main__":

@@ -155,12 +155,23 @@ The browser opens at **http://127.0.0.1:8765** (also http://localhost:8765).
 1. **Start camera** and allow access. With several cameras, choose one in the dropdown.
 2. Pick the arm in the **Arm** dropdown, or switch with `Q` / `E`.
 3. **Power on**, which asks you to confirm. The arm holds where it is.
-4. Move with **−** / **+** (keep pressed to keep moving), **Open/Close gripper**, or the keys:
-   `1`–`7` pick a joint, `←`/`→` or `A`/`D` move it, `Space` holds.
+4. Move in real time with the **3 on-screen joysticks** (mouse or touch; let go and the arm stops)
+   or by **holding keys** (several at once, no gamepad needed):
+
+   | Keys | Joint | Keys | Joint |
+   |---|---|---|---|
+   | `A` / `D` | J1 base | `W` / `S` | J2 shoulder |
+   | `J` / `L` | J5 wrist yaw | `I` / `K` | J3 elbow |
+   | `←` / `→` | J6 wrist roll | `↑` / `↓` | J4 wrist flex |
+   | `Z` / `X` | gripper open / close | `Shift` (hold) | precise, 40 % speed |
+   | `Space` | stop (hold) | `Q` / `E` | switch arm |
+
+   **Speed**: Slow / Normal / Fast = 25 / 50 / 100 % of the 15°/s ramp. Switching tabs or windows
+   releases every key and the arm holds.
 5. **Park & power off** returns the arm to where it was when you powered it on and releases torque.
    Ctrl-C in the terminal parks every arm and quits.
 
-Start with 1–2° steps on J1 (base) and J4–J6 (wrist); J2/J3 carry the arm's weight.
+Start on **Slow** with J1 (base) and J4–J6 (wrist); J2/J3 carry the arm's weight.
 If an arm can't be reached, it shows as *offline* and the other one still works.
 
 ## 7. Team control from anywhere (LiveKit)
@@ -205,7 +216,7 @@ bash setup.sh                        # Windows: powershell -ExecutionPolicy Bypa
 ./run.sh remote.py                   # Windows: .\run.ps1 remote.py   ->  opens http://127.0.0.1:8770
 ```
 Type your name and **Join**, and you'll see the arm camera. Press **Take control** to drive. Same
-controls as the local page: arm dropdown or `Q`/`E`, joints `1`–`7`, `←`/`→`, hold-to-repeat.
+controls as the local page: joysticks, the same held keys, arm dropdown or `Q`/`E`.
 
 **Rules (enforced by the arm laptop):**
 - **One controller at a time.** Others see who has control and must wait for *Release control*.
@@ -217,7 +228,7 @@ controls as the local page: arm dropdown or `Q`/`E`, joints `1`–`7`, `←`/`�
 
 Wire format (JSON over LiveKit data, room `LIVEKIT_ROOM`): `arm/state` from `arm-host` at 5 Hz
 (`arms`, `controller`, `viewers`, `info`); `arm/cmd` to `arm-host` (`take`, `release`, `ping`,
-`jog {arm, joint, deg}`, `hold {arm}`, `park {arm}`); `arm/reply` back to the sender.
+`jog {arm, joint, deg}`, `move {arm, v: {joint: deg, ...}}` (joysticks, 10 Hz), `hold {arm}`, `park {arm}`); `arm/reply` back to the sender.
 
 Terminal-only alternative for a single arm: `python arm_server.py` next to the arm (type `MOVE`)
 and `python controller.py` anywhere (`1`–`7`, `a`/`d`, `[`/`]` step, `h` hold, `p` park, `q` quit).
@@ -229,7 +240,8 @@ and `python controller.py` anywhere (`1`–`7`, `a`/`d`, `[`/`]` step, `h` hold,
 - A motor above **70 °C** blocks power-on. The web app shows joint temperatures in orange from
   60 °C and red above 70 °C.
 - Each step is at most 10° and ramps at 15°/s. Targets stay 5° inside each joint's soft limits,
-  never run more than 10° ahead of the real position, and a joint resting outside its safe band
+  never run more than 10° ahead of the real position (4° for joystick/key moves, so the arm stops
+  within ~0.3 s when input stops), and a joint resting outside its safe band
   can only be moved back toward the inside.
 - Remote team control: one controller at a time, heartbeat every second (control lost after 5 s
   of silence), anyone can Hold/Park, power-on and fault clearing only on the arm laptop.
