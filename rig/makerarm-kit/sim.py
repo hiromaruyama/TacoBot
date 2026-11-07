@@ -43,6 +43,8 @@ class _SimMotor:
                 self.enabled = True
             elif op == p.OP_DISABLE:
                 self.enabled = False
+            elif op == p.OP_SET_ZERO:
+                self.position = 0.0
             return [self.reply()]
         # MIT position command: follow it when torque is on and kp > 0
         q = (data[0] << 8) | data[1]
@@ -58,8 +60,13 @@ class SimBus(MockBackend):
     def __init__(self, cfg: ArmConfig):
         super().__init__()
         self.motors = {}
+        import math
+        import os
+        lost_zero = os.environ.get("SIM_GRIPPER_DEG")  # e.g. 82.7: simulate a gripper that lost its zero
         for j in cfg.joints:
             mid_joint = (j.lo + j.hi) / 2
+            if lost_zero and j.motor_id == 7:
+                mid_joint = math.radians(float(lost_zero))
             motor_pos = mid_joint * j.direction + j.offset
             self.motors[j.motor_id] = _SimMotor(j.motor_id, p.MOTOR_PARAMS[j.model], motor_pos)
         self.responder = self._respond

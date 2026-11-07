@@ -24,6 +24,7 @@ COM port) and one candleLight adapter (no COM port, uses gs_usb). macOS and Linu
 | `first_move.py` | Simplest test: nudge one joint a few degrees and back. Also lists ports |
 | `arm_server.py` | Runs next to an arm: joins a LiveKit room and accepts small jog commands |
 | `controller.py` | Runs anywhere: keyboard (or `--demo`) control over LiveKit |
+| `zero_gripper.py` | Re-zero only the gripper (motor 7) when it lost its zero; torque stays off |
 | `sim.py` | Simulated motors so everything works with `--sim`, no hardware |
 | `setup.sh` / `setup.ps1` | One-time setup (macOS/Linux / Windows) |
 | `run.sh` / `run.ps1` | Run any script with the kit's venv; no arguments = web app |
@@ -235,6 +236,16 @@ and `python controller.py` anywhere (`1`–`7`, `a`/`d`, `[`/`]` step, `h` hold,
   releasing torque. If that can't be verified, the SDK keeps holding and asks you to type `RELEASE`.
 
 All limits are at the top of `armkit.py`.
+
+## Troubleshooting
+
+| Message | What it means / what to do |
+|---|---|
+| `too hot to power on (J3 78°C ...)` | A motor is above 70 °C. Let it cool; if it stays hot for 10–15 min, tell the MakerMods staff. |
+| `gripper (motor 7) at +82.7 deg is outside its limits ... stale or missing zero` | The gripper lost its zero (common after a power cycle or a thermal cut-off). Power-on is blocked on purpose. Close every app using that arm, then `python zero_gripper.py --port candle:0` (that arm's port): motors stay off, you close the gripper fully by hand, type `ZERO`, and it checks the new reading is ~0°. Only the gripper is touched. If a *joint* (J1–J6) shows this, ask the staff: that needs the full `maker-arm zero` at the folded pose. |
+| `not responding` / USB `Input/Output Error` | That arm's CAN bus isn't answering: check its power supply and e-stop. The app keeps retrying. |
+| `Access denied` / `could not open port` | Another program holds the adapter (a second web_app, MakerModsLab, upstream's robot). Close it. |
+| Arm in **FAULT** | Use **Clear fault** on the arm laptop: it walks back to the power-on pose, then clears. |
 
 ## Joint map
 
