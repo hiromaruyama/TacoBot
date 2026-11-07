@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from aiohttp import web
 
 from arm_server import ArmBridge
-from armkit import (DEFAULT_SPEED_DEG_S, JOINT_HELP, MAX_STEP_DEG, _config, is_on, load_env, open_arm,
+from armkit import (WEB_SPEED_DEG_S, JOINT_HELP, MAX_STEP_DEG, _config, is_on, load_env, open_arm,
                     required_env, safe_range_deg, safe_shutdown, usb_serial_ports)
 from candle_backend import candle_index, is_candle_port, list_candle_devices
 
@@ -158,7 +158,7 @@ class Control:
 class Hub:
     """All arms + the control lock. Both the local page and LiveKit go through run()."""
 
-    def __init__(self, slots: list[ArmSlot], sim: bool, speed: float = DEFAULT_SPEED_DEG_S) -> None:
+    def __init__(self, slots: list[ArmSlot], sim: bool, speed: float = WEB_SPEED_DEG_S) -> None:
         self.slots = slots
         self.speed = speed
         self.by_id = {s.id: s for s in slots}
@@ -504,7 +504,7 @@ def main() -> None:
     ap.add_argument("--sim", action="store_true", help="simulated motors, no hardware")
     ap.add_argument("--arms", help="name=PORT list, e.g. left=COM9,right=COM10 (default: ARM_PORTS / ARM_PORT)")
     ap.add_argument("--livekit", action="store_true", help="also put the arms in the LiveKit room for the team")
-    ap.add_argument("--speed", type=float, default=DEFAULT_SPEED_DEG_S, help="deg/s ramp speed")
+    ap.add_argument("--speed", type=float, default=WEB_SPEED_DEG_S, help="deg/s at Fast (Normal = half)")
     ap.add_argument("--http-port", type=int, default=8765)
     ap.add_argument("--no-browser", action="store_true", help="don't open the browser")
     a = ap.parse_args()

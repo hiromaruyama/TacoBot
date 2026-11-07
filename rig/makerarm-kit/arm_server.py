@@ -36,7 +36,7 @@ from armkit import (DEFAULT_SPEED_DEG_S, MAX_STEP_DEG, is_on, load_env, open_arm
 from lk import ARM_IDENTITY, CMD_TOPIC, STATE_TOPIC, mint_token
 
 STATE_HZ = 10
-MOVE_LEAD_DEG = 4.0  # joystick/held-key moves: target at most this far ahead -> stops in ~0.3 s
+MOVE_LEAD_DEG = 8.0  # joystick/held-key moves: target at most this far ahead -> stops in ~0.15 s at 60 deg/s
 
 
 class ArmBridge:

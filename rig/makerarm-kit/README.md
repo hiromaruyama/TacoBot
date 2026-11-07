@@ -163,15 +163,17 @@ The browser opens at **http://127.0.0.1:8765** (also http://localhost:8765).
    | `A` / `D` | J1 base | `W` / `S` | J2 shoulder |
    | `J` / `L` | J5 wrist yaw | `I` / `K` | J3 elbow |
    | `←` / `→` | J6 wrist roll | `↑` / `↓` | J4 wrist flex |
-   | `Z` / `X` | gripper open / close | `Shift` (hold) | precise, 40 % speed |
+   | `O` / `C` | gripper open / close | `Shift` (hold) | precise, 40 % speed |
+   | `Z` / `X` | speed − / + (10 % steps) | | |
    | `Space` | stop (hold) | `Q` / `E` | switch arm |
 
-   **Speed**: Slow / Normal / Fast = 25 / 50 / 100 % of the 15°/s ramp. Switching tabs or windows
+   **Speed** slider (or `Z`/`X`): 5–100 % of 60°/s (change the top speed with `--speed`).
+   The gripper closes all the way to its profile limit (other joints stay 5° inside theirs). Switching tabs or windows
    releases every key and the arm holds.
 5. **Park & power off** returns the arm to where it was when you powered it on and releases torque.
    Ctrl-C in the terminal parks every arm and quits.
 
-Start on **Slow** with J1 (base) and J4–J6 (wrist); J2/J3 carry the arm's weight.
+Start around 30 % with J1 (base) and J4–J6 (wrist); J2/J3 carry the arm's weight.
 The app starts even with **no arm connected**. It checks the USB adapters live (every 3 s, shown as
 `USB: COM9, candle:0` in the header) and connects an arm by itself as soon as its adapter is plugged in
 and its motors answer (retrying every 10 s). Pick a *not connected* arm and press **Connect** to try
@@ -243,9 +245,9 @@ and `python controller.py` anywhere (`1`–`7`, `a`/`d`, `[`/`]` step, `h` hold,
   terminal), never by a remote peer.
 - A motor above **70 °C** blocks power-on. The web app shows joint temperatures in orange from
   60 °C and red above 70 °C.
-- Each step is at most 10° and ramps at 15°/s. Targets stay 5° inside each joint's soft limits,
-  never run more than 10° ahead of the real position (4° for joystick/key moves, so the arm stops
-  within ~0.3 s when input stops), and a joint resting outside its safe band
+- Each step is at most 10°; the web app ramps at up to 60°/s (`--speed`), the CLI tools at 15°/s. Targets stay 5° inside each joint's soft limits (gripper: 0°, so it closes fully),
+  never run more than 10° ahead of the real position (8° for joystick/key moves, so the arm stops
+  within ~0.15 s when input stops), and a joint resting outside its safe band
   can only be moved back toward the inside.
 - Remote team control: one controller at a time, heartbeat every second (control lost after 5 s
   of silence), anyone can Hold/Park, power-on and fault clearing only on the arm laptop.
