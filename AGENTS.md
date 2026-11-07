@@ -5,8 +5,11 @@ Read it fully before your first edit. `CLAUDE.md` imports this file.
 
 ## 1. Mission
 
-Make a quesadilla with two **MakerMods arms** (Metal, or Maker Arm v1) using **LiveKit Portal** and **Dream-1**:
+Make a quesadilla with two **MakerMods Maker Arm v1** arms using **LiveKit Portal** and **Dream-1**:
 tortilla on griddle → cheese → filling → melt → fold → cook → flip → cook → plate.
+
+Our rig is **Maker Arm v1** (RobStride motors), not Metal: set `MAKERMODS_MODEL=makers` in `upstream/.env` on every
+host, and measure the gripper angles for these arms (never copy Metal's values).
 
 We do **not** write our own arm driver. `upstream/` is
 [livekit-examples/portal-makermods @ dc/maker_arm](https://github.com/livekit-examples/portal-makermods/tree/dc/maker_arm)
@@ -22,6 +25,7 @@ upstream/              READ-ONLY submodule — portal-makermods (robot, teleop, 
 tacobot/tasks.toml     lane tasks — one Dream-1 prompt per quesadilla step
 tacobot/sequencer.py   lane tasks — walks dream-1-tasks through the steps over Portal RPC
 rig/                   lane rig   — workcell layout, griddle, cameras, calibration, safety checklist
+rig/makerarm-kit/      lane rig   — bring-up / manual-jog web kit, talks to CAN directly (own venv, humans only)
 data/                  lane data  — recordings, dataset conversion, ACT training notes
 coordination/          lanes.toml + claims/ — the anti-conflict system (§4)
 scripts/claims.py      claim / check / release tool
@@ -108,6 +112,15 @@ Then `make cook` starts the sequencer. Humans only — see §7.
 4. First runs of any new prompt: **griddle OFF and cold**, a person on the leader arms / `p` key.
 5. Hot runs: a person watches the whole time, heat-proof gloves and extinguisher nearby. See `rig/SAFETY.md`.
 6. The sequencer is not an e-stop. Voice isn't either. Take over with the leaders or park.
+7. **One program owns the arms at a time.** `rig/makerarm-kit` and upstream's `uv run robot` (or MakerModsLab) must never
+   run together: stop one (Ctrl-C parks first) before starting the other.
+8. **One person owns the arms at a time.** Say it out loud before anything that moves them.
+9. **Remote control (makerarm-kit invite links, harness) only with the griddle cold**, and with someone at the arm laptop.
+10. Tools under `rig/` that talk to CAN directly are humans-only, exactly like upstream's peers.
+
+## 7b. Team workflow
+- Open a **draft PR as soon as you start**, so the team sees what you're doing. Keep your claim until the PR is ready.
+- One source of truth per thing: quesadilla steps live in `tacobot/tasks.toml`; other tools read it, not a copy.
 
 ## 8. Definition of done
 - [ ] `make check` passes
