@@ -186,7 +186,16 @@ python web_app.py --livekit          # or: ./run.sh web_app.py --livekit  /  .\r
 2. **Power on** the arms here. Power-on is only possible on the arm laptop.
 3. The *Team* box shows who's connected and who has control. **Take control back** ends anyone's control.
 
-**On each teammate's laptop** (Windows, macOS or Linux; no arm hardware needed):
+**Teammates, easiest way: an invite link (nothing to install).** In the *Team* box, type their
+name, pick how long it lasts (1/4/12 h) and click **Create invite link**, then **Copy** and send
+it privately. They open it in any browser (Chrome, Safari, Edge, phone too) and click
+**Join as <name>**. The link opens the public copy of `static/remote.html` served from this repo.
+Its access token sits after the `#`, so it never reaches that host; it only lets them join this
+room (no video publishing) and expires on its own. Anyone holding the link can join until then,
+so don't post it publicly. If you fork or move the repo, point the links elsewhere with
+`REMOTE_PAGE_URL=` in `.env`.
+
+**Or, on a teammate's laptop with the code** (Windows, macOS or Linux; no arm hardware needed):
 ```bash
 git clone https://github.com/hiromaruyama/TacoBot.git && cd TacoBot/rig/makerarm-kit
 bash setup.sh                        # Windows: powershell -ExecutionPolicy Bypass -File .\setup.ps1
