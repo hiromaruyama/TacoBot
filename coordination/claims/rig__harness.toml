@@ -1,0 +1,8 @@
+branch = "rig/harness"
+lane = "rig"
+task = "rig harness: web UI + API to prompt Dream-1 and watch the cameras"
+owner = "immanuel"
+created = "2026-11-07T13:42"
+paths = [
+  "rig/harness/**",
+]
