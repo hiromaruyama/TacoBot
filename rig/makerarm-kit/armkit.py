@@ -49,13 +49,29 @@ def required_env(name: str) -> str:
     return value
 
 
-# ── Finding the USB-CAN adapter on Windows ──
-def find_can_port() -> str:
-    """Return the COM port of the USB-CAN adapter (CANable/SLCAN), or explain what to pass."""
+# ── Finding the USB-CAN adapter (Windows / macOS / Linux) ──
+def usb_serial_ports() -> list:
+    """Serial ports that can be a USB-CAN (SLCAN) adapter, per OS.
+
+    Windows: COMx, minus Bluetooth links.  macOS: only /dev/cu.usbmodem* / cu.usbserial*
+    (skips the tty.* twins, Bluetooth and debug-console).  Linux: /dev/ttyACM* / ttyUSB*.
+    """
+    import sys
     from serial.tools import list_ports
 
-    usb = [p for p in list_ports.comports()
-           if "BTHENUM" not in (p.hwid or "").upper() and "bluetooth" not in (p.description or "").lower()]
+    ports = list_ports.comports()
+    if sys.platform == "darwin":
+        return [p for p in ports if p.device.startswith("/dev/cu.")
+                and ("usbmodem" in p.device or "usbserial" in p.device)]
+    if sys.platform.startswith("linux"):
+        return [p for p in ports if p.device.startswith(("/dev/ttyACM", "/dev/ttyUSB"))]
+    return [p for p in ports
+            if "BTHENUM" not in (p.hwid or "").upper() and "bluetooth" not in (p.description or "").lower()]
+
+
+def find_can_port() -> str:
+    """Return the port of the only USB-CAN adapter (SLCAN serial or candleLight), or explain."""
+    usb = usb_serial_ports()
     from candle_backend import list_candle_devices
     candles = list_candle_devices()
     if len(usb) + len(candles) == 1:
@@ -71,10 +87,15 @@ def find_can_port() -> str:
 
 def list_ports_text() -> str:
     from serial.tools import list_ports
+
     from candle_backend import list_candle_devices
-    rows = [f"  {p.device}: {p.description}  [{p.hwid}]" for p in list_ports.comports()]
-    rows += [f"  {c}: candleLight USB-to-CAN adapter (use '{c}' as the port)" for c in list_candle_devices()]
-    return "\n".join(rows) or "  (none)"
+    likely = {p.device for p in usb_serial_ports()}
+    rows = [f"  {'*' if p.device in likely else ' '} {p.device}: {p.description}  [{p.hwid}]"
+            for p in list_ports.comports()]
+    rows += [f"  * {c}: candleLight USB-to-CAN adapter (use '{c}' as the port)" for c in list_candle_devices()]
+    if not rows:
+        return "  (none)"
+    return "\n".join(rows) + "\n  (* = looks like a USB-CAN adapter)"
 
 
 # ── Opening the arm ──

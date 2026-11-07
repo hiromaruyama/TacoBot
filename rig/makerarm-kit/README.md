@@ -14,7 +14,8 @@ camera view, or remotely over LiveKit. Built on the official
 > - It has its own venv and requirements; it doesn't touch the repo's `pyproject.toml` or `upstream/`.
 
 Tested on **Windows 11** with two arms through one USB hub: one SLCAN adapter (shows up as a
-COM port) and one candleLight adapter (no COM port, uses gs_usb). Should also work on macOS/Linux.
+COM port) and one candleLight adapter (no COM port, uses gs_usb). macOS and Linux are supported
+(port detection, setup and launch scripts below) but have not been tried on real arms yet.
 
 | File | What it does |
 |---|---|
@@ -23,6 +24,8 @@ COM port) and one candleLight adapter (no COM port, uses gs_usb). Should also wo
 | `arm_server.py` | Runs next to an arm: joins a LiveKit room and accepts small jog commands |
 | `controller.py` | Runs anywhere: keyboard (or `--demo`) control over LiveKit |
 | `sim.py` | Simulated motors so everything works with `--sim`, no hardware |
+| `setup.sh` / `setup.ps1` | One-time setup (macOS/Linux / Windows) |
+| `run.sh` / `run.ps1` | Run any script with the kit's venv; no arguments = web app |
 | `armkit.py`, `candle_backend.py`, `lk.py` | Shared helpers, safety limits, candleLight support, LiveKit tokens |
 
 ## 1. Setup (once)
@@ -45,9 +48,45 @@ bash setup.sh
 source .venv/bin/activate
 ```
 
-All commands below run from `rig/makerarm-kit/`.
+All commands below run from `rig/makerarm-kit/`, with the venv activated. Without activating,
+use the launchers instead of `python`: `./run.sh <script> [args]` (macOS/Linux) or
+`.\run.ps1 <script> [args]` (Windows). With no arguments they start the web app.
 
 Setup creates `.env` from `.env.example`. Never commit `.env`.
+
+### macOS quick start
+
+```bash
+# 1. Python 3.10+ (macOS's built-in python3 is usually 3.9)
+brew install python@3.12            # needs Homebrew: https://brew.sh
+
+# 2. Get the kit and set it up
+git clone https://github.com/hiromaruyama/TacoBot.git
+cd TacoBot/rig/makerarm-kit
+bash setup.sh
+
+# 3. Try it without hardware
+./run.sh web_app.py --sim           # opens http://127.0.0.1:8765
+
+# 4. Plug in the arms' USB hub, find the ports, put them in .env
+./run.sh first_move.py --list-ports # e.g. /dev/cu.usbmodem2101 and candle:0
+open -e .env                        # ARM_PORTS=left=/dev/cu.usbmodem2101,right=candle:0
+
+# 5. Go
+./run.sh first_move.py --read-only  # motors OFF: move an arm by hand, angles should change
+./run.sh                            # web app with the real arms
+```
+
+macOS notes:
+- **Ports:** SLCAN adapters are `/dev/cu.usbmodem…` or `/dev/cu.usbserial…`. Always use the
+  `cu.` name, not the `tty.` twin. The listing marks the likely ones with `*`.
+- **candleLight** (`candle:0`) needs no driver on macOS: `libusb` ships inside the
+  `libusb-package` dependency. If it isn't found, `brew install libusb` and try again.
+- **Camera:** the first time you click *Start camera*, allow it in the browser. If it stays
+  black, enable your browser under System Settings → Privacy & Security → Camera, then restart
+  the browser. USB cameras on the hub appear in the camera dropdown.
+- **Keyboard controller** (`controller.py`) reads single keys in Terminal/iTerm, arrows included.
+- If `./run.sh` says *permission denied*: `chmod +x run.sh setup.sh`, or use `bash run.sh`.
 
 ## 2. Try it without hardware
 
@@ -65,15 +104,18 @@ python first_move.py --list-ports
 ```
 
 - An SLCAN adapter shows as a serial port, e.g. `COM9` (Windows), `/dev/cu.usbmodem…` (macOS)
-  or `/dev/ttyACM0` (Linux). Ignore "Bluetooth" ports.
+  or `/dev/ttyACM0` (Linux). Ignore "Bluetooth" ports; likely adapters are marked with `*`.
 - A **candleLight** adapter shows as `candle:0` (`candle:1` for a second one).
   On Linux you can also bring it up as SocketCAN instead.
 
 Put them in `.env`, naming each arm the way you want it to appear in the dropdown:
 
 ```ini
+# Windows
 ARM_PORTS=left=COM9,right=candle:0
 ARM_PORT=COM9   # used by the single-arm scripts
+# macOS
+ARM_PORTS=left=/dev/cu.usbmodem2101,right=candle:0
 ```
 
 Not sure which arm is which? Use `python first_move.py --read-only --port COM9` (motors stay

@@ -28,8 +28,27 @@ STEPS = [1.0, 2.0, 5.0, 10.0]
 
 
 def start_key_reader(queue: asyncio.Queue) -> None:
-    """Single keypresses on Windows (msvcrt); typed lines elsewhere."""
+    """Single keypresses: msvcrt on Windows, cbreak mode on macOS/Linux; typed lines as a fallback."""
     loop = asyncio.get_running_loop()
+
+    def posix() -> None:
+        import atexit
+        import termios
+        import tty
+        fd = sys.stdin.fileno()
+        saved = termios.tcgetattr(fd)
+        atexit.register(termios.tcsetattr, fd, termios.TCSADRAIN, saved)  # always give the terminal back
+        tty.setcbreak(fd)  # keys arrive one by one; Ctrl-C still works
+        while True:
+            ch = sys.stdin.read(1)
+            if not ch:
+                return
+            if ch == "\x1b":  # arrow keys: ESC [ C (right) / ESC [ D (left)
+                seq = sys.stdin.read(2)
+                ch = {"[C": "d", "[D": "a"}.get(seq, "")
+                if not ch:
+                    continue
+            loop.call_soon_threadsafe(queue.put_nowait, ch.lower())
 
     def windows() -> None:
         import msvcrt
@@ -45,7 +64,12 @@ def start_key_reader(queue: asyncio.Queue) -> None:
             for ch in line.strip().lower():
                 loop.call_soon_threadsafe(queue.put_nowait, ch)
 
-    target = windows if sys.platform == "win32" else lines
+    if sys.platform == "win32":
+        target = windows
+    elif sys.stdin.isatty():
+        target = posix
+    else:
+        target = lines
     threading.Thread(target=target, daemon=True, name="keys").start()
 
 
