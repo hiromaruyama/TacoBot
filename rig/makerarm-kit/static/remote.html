@@ -129,10 +129,23 @@
   </section>
 </main>
 
-<script src="https://cdn.jsdelivr.net/npm/livekit-client@2.20.2/dist/livekit-client.umd.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
-const LK = window.LivekitClient;
+let LK = null;
+const SDK_URL = "https://cdn.jsdelivr.net/npm/livekit-client@2.20.2/dist/livekit-client.umd.js";
+function loadSdk() {  // loaded on demand: works both from remote.py and from a static host
+  if (window.LivekitClient) return Promise.resolve(window.LivekitClient);
+  return new Promise((ok, fail) => {
+    const s = document.createElement("script");
+    s.src = SDK_URL;
+    s.onload = () => window.LivekitClient ? ok(window.LivekitClient) : fail(new Error("LiveKit SDK missing"));
+    s.onerror = () => fail(new Error("could not load the LiveKit SDK (no internet?)"));
+    document.head.appendChild(s);
+  });
+}
+// Invite links carry everything after '#': u = LiveKit URL, t = token, n = name, h = host identity.
+// The part after '#' never leaves the browser.
+const invite = Object.fromEntries(new URLSearchParams(location.hash.slice(1)));
 const STEPS = [1, 2, 5, 10];
 let room = null, me = null, host = "arm-host";
 let latest = null, latestAt = 0, armId = null, step = 2, selected = 1, built = false;
@@ -146,14 +159,35 @@ let savedName = null; try { savedName = localStorage.getItem("remoteName"); } ca
 $("name").value = savedName || params.get("name") || "";
 $("btnJoin").onclick = join;
 $("name").addEventListener("keydown", e => { if (e.key === "Enter") join(); });
+if (invite.t) {  // opened from an invite link: the name is fixed by the link
+  $("name").hidden = true;
+  $("btnJoin").textContent = `Join as ${invite.n || "guest"}`;
+}
+
+async function getToken(name) {
+  if (invite.t) {
+    return { url: invite.u, token: invite.t, name: invite.n || "guest", host: invite.h || "arm-host",
+             identity: identityFromToken(invite.t) };
+  }
+  let r;
+  try { r = await fetch("/api/token?name=" + encodeURIComponent(name)); } catch (e) { r = null; }
+  if (!r || !r.ok) throw new Error("this page needs an invite link from the arm laptop (Team box → Invite)");
+  return r.json();
+}
+function identityFromToken(tok) {  // the JWT's "sub" is our identity in the room
+  try {
+    const b = tok.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+    return JSON.parse(atob(b + "===".slice((b.length + 3) % 4))).sub;
+  } catch (e) { return null; }
+}
 
 async function join() {
   const name = $("name").value.trim() || "guest";
   try { localStorage.setItem("remoteName", name); } catch (e) {}
   $("btnJoin").disabled = true;
   try {
-    if (!LK) throw new Error("the LiveKit SDK didn't load (no internet?)");
-    const t = await (await fetch("/api/token?name=" + encodeURIComponent(name))).json();
+    LK = await loadSdk();
+    const t = await getToken(name);
     me = t.identity; host = t.host;
     room = new LK.Room({ adaptiveStream: true, dynacast: true });
     room.on(LK.RoomEvent.TrackSubscribed, onTrack);
@@ -175,7 +209,8 @@ async function join() {
     setInterval(() => { if (iHaveControl()) send({ cmd: "ping" }); }, 1000);
   } catch (e) {
     $("joinMsg").hidden = false; $("joinMsg").className = "msg fault";
-    $("joinMsg").textContent = "Could not join: " + e.message;
+    const expired = /401|expired|token/i.test(e.message) && invite.t;
+    $("joinMsg").textContent = "Could not join: " + (expired ? "this invite link has expired; ask for a new one" : e.message);
     $("btnJoin").disabled = false;
   }
 }

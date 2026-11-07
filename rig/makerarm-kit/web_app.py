@@ -42,6 +42,10 @@ REMOTE_ALLOWED = {"jog", "hold", "park"}
 ANYONE_ALLOWED = {"hold", "park"}  # stop actions: any remote viewer may use them
 CONTROL_IDLE_S = 60.0              # a controller that sends no commands loses control after this long
 HEARTBEAT_S = 5.0                  # ...and one whose page stops sending heartbeats (tab closed, Wi-Fi gone)
+INVITE_HOURS = 4                   # default lifetime of an invite link (max 12)
+# Public copy of static/remote.html that invite links open (served straight from the GitHub repo).
+DEFAULT_REMOTE_PAGE = ("https://htmlpreview.github.io/?https://github.com/hiromaruyama/TacoBot/blob/"
+                       "rig/makerarm-web-kit/rig/makerarm-kit/static/remote.html")
 STATE_HZ = 5
 
 
@@ -330,6 +334,32 @@ def make_app(hub: Hub, use_livekit: bool) -> web.Application:
                          required_env("LIVEKIT_ROOM"), publish_media=True, name="Arm camera")
         return web.json_response({"url": required_env("LIVEKIT_URL"), "token": tok})
 
+    async def invite(request: web.Request):
+        """An invite link for a teammate: opens the public remote page, nothing to install.
+
+        The token (viewer rights only: data, no video/audio publishing) rides after '#', so it never
+        reaches the page host. It expires after `hours`. Anyone holding the link can join until then.
+        """
+        import re
+        import secrets
+        from urllib.parse import urlencode
+
+        from lk import HOST_IDENTITY, mint_token
+        if not hub.livekit_on:
+            raise web.HTTPNotFound(text="start with --livekit to invite teammates")
+        name = re.sub(r"[^A-Za-z0-9 _-]", "", request.query.get("name", "")).strip()[:24] or "guest"
+        try:
+            hours = min(max(float(request.query.get("hours", INVITE_HOURS)), 0.25), 12)
+        except ValueError:
+            hours = INVITE_HOURS
+        identity = f"{name.replace(' ', '-')}-{secrets.token_hex(2)}"
+        tok = mint_token(required_env("LIVEKIT_API_KEY"), required_env("LIVEKIT_API_SECRET"), identity,
+                         required_env("LIVEKIT_ROOM"), hours=hours, publish_media=False, name=name)
+        page = os.environ.get("REMOTE_PAGE_URL", "").strip() or DEFAULT_REMOTE_PAGE
+        frag = urlencode({"u": required_env("LIVEKIT_URL"), "t": tok, "n": name, "h": HOST_IDENTITY})
+        print(f"[web] invite link created for '{name}' ({identity}), valid {hours:g} h")
+        return web.json_response({"link": f"{page}#{frag}", "name": name, "identity": identity, "hours": hours})
+
     async def lk_ctx(app):
         task = None
         if use_livekit:
@@ -357,6 +387,7 @@ def make_app(hub: Hub, use_livekit: bool) -> web.Application:
     app.router.add_get("/api/state", state)
     app.router.add_post("/api/cmd", command)
     app.router.add_get("/api/camera-token", camera_token)
+    app.router.add_get("/api/invite", invite)
     app.router.add_static("/static", STATIC)
     app.cleanup_ctx.append(lk_ctx)
     app.on_cleanup.append(on_cleanup)

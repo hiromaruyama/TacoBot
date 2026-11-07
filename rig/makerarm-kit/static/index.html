@@ -120,6 +120,19 @@
         <span class="spacer"></span>
         <button id="btnTakeBack" class="danger" hidden>Take control back</button>
       </div>
+      <div class="row">
+        <input id="inviteName" placeholder="Teammate's name" maxlength="24" style="flex:1;min-width:140px">
+        <select id="inviteHours" title="How long the link works">
+          <option value="1">1 h</option><option value="4" selected>4 h</option><option value="12">12 h</option>
+        </select>
+        <button id="btnInvite">Create invite link</button>
+      </div>
+      <div id="inviteOut" class="row" hidden>
+        <input id="inviteLink" readonly style="flex:1;min-width:0">
+        <button id="btnCopy">Copy</button>
+      </div>
+      <div class="muted" id="inviteHint" hidden>Send it privately (DM). Anyone with the link can join and take
+        control until it expires; nothing to install, opens in any browser.</div>
     </div>
   </section>
 
@@ -394,6 +407,24 @@ $("btnTakeBack").onclick = async () => {
                                       body: JSON.stringify({ cmd: "release" }) });
   showMsg((await r.json()).msg);
 };
+$("btnInvite").onclick = async () => {
+  const name = $("inviteName").value.trim();
+  if (!name) { $("inviteName").focus(); return; }
+  try {
+    const r = await fetch(`/api/invite?name=${encodeURIComponent(name)}&hours=${$("inviteHours").value}`);
+    if (!r.ok) throw new Error(await r.text());
+    const j = await r.json();
+    $("inviteLink").value = j.link; $("inviteOut").hidden = false; $("inviteHint").hidden = false;
+    $("btnCopy").textContent = "Copy";
+    showMsg(`Invite for ${j.name} ready (valid ${j.hours} h). Copy it and send it privately.`);
+  } catch (e) { showMsg("Could not create the invite: " + e.message, true); }
+};
+$("btnCopy").onclick = async () => {
+  try { await navigator.clipboard.writeText($("inviteLink").value); }
+  catch (e) { $("inviteLink").select(); document.execCommand("copy"); }
+  $("btnCopy").textContent = "Copied!";
+};
+$("inviteName").addEventListener("keydown", e => { if (e.key === "Enter") $("btnInvite").click(); });
 // switching cameras while shared: republish the new track
 $("camSelect").addEventListener("change", () => setTimeout(() => { if (lkPub) shareCamera(); }, 800));
 
