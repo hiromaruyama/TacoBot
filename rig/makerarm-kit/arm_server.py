@@ -58,9 +58,32 @@ class ArmBridge:
         self.arm.refresh()
         if reason := too_hot(self.arm):
             return reason
-        self.arm.enable()
+        note = ""
+        try:
+            self.arm.enable()
+        except Exception as exc:
+            # Some gripper firmware answers parameter reads but ignores the write of its 500 ms CAN
+            # watchdog (reads back 0). The SDK checks this BEFORE enabling any motor, so the arm is
+            # still off here. Retry once without that watchdog: the same mode as grippers whose
+            # firmware has no parameter access at all (MakerModsLab/SDK run those that way too).
+            if "CAN timeout read back" not in str(exc) or not self._drop_gripper_watchdog():
+                raise
+            self.arm.enable()
+            note = " (gripper without its 500 ms motor watchdog: firmware ignores the setting)"
         self.targets_deg = positions_deg(self.arm)
-        return "motors ON, holding where they are"
+        return "motors ON, holding where they are" + note
+
+    def _drop_gripper_watchdog(self) -> bool:
+        from dataclasses import replace
+        joints = self.arm.config.joints
+        changed = False
+        for i, j in enumerate(joints):
+            if j.can_timeout_ms is not None:
+                joints[i] = replace(j, can_timeout_ms=None)
+                changed = True
+                print(f"[arm] {j.label}: firmware ignores the CAN watchdog setting; "
+                      "running without its motor watchdog (like older grippers)")
+        return changed
 
     def park(self) -> str:
         if not is_on(self.arm):
