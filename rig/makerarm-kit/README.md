@@ -19,7 +19,8 @@ COM port) and one candleLight adapter (no COM port, uses gs_usb). macOS and Linu
 
 | File | What it does |
 |---|---|
-| `web_app.py` + `static/` | Local web page at http://127.0.0.1:8765: live camera, arm dropdown, buttons for every joint |
+| `web_app.py` + `static/index.html` | Arm laptop: web page at http://127.0.0.1:8765 (camera, arm dropdown, every joint). With `--livekit`, shares the arms and camera with the team |
+| `remote.py` + `static/remote.html` | **Teammates, from anywhere:** live arm camera + controls over LiveKit (no arm hardware needed) |
 | `first_move.py` | Simplest test: nudge one joint a few degrees and back. Also lists ports |
 | `arm_server.py` | Runs next to an arm: joins a LiveKit room and accepts small jog commands |
 | `controller.py` | Runs anywhere: keyboard (or `--demo`) control over LiveKit |
@@ -160,17 +161,55 @@ The browser opens at **http://127.0.0.1:8765** (also http://localhost:8765).
 Start with 1–2° steps on J1 (base) and J4–J6 (wrist); J2/J3 carry the arm's weight.
 If an arm can't be reached, it shows as *offline* and the other one still works.
 
-## 7. Remote control over LiveKit (optional)
+## 7. Team control from anywhere (LiveKit)
 
-1. LiveKit Cloud → your project → **Settings → API Keys** → create a key. Put `LIVEKIT_URL`,
-   `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` in `.env`.
-2. Next to the arm: `python arm_server.py` (or `--sim`), then type `MOVE` to power it up.
-3. On any laptop with the same `.env`: `python controller.py`
-   (`1`–`7` pick joint, `a`/`d` jog, `[`/`]` step size, `h` hold, `p` park, `q` quit),
-   or `python controller.py --demo` for a small wave of the base.
+Everyone on the team can watch the arm camera and drive the arms from their own laptop, on any
+network. LiveKit carries the video and the commands.
 
-Messages are JSON over LiveKit data channels: `arm/cmd` (controller → arm) and `arm/state`
-(arm → everyone, 10 Hz). See the docstring of `arm_server.py`.
+```
+ arm laptop                                LiveKit Cloud room                 each teammate
+ web_app.py --livekit  ── arm state ──▶   ┌──────────────────┐   ◀── video ──  remote.py
+   (arms on USB)       ◀── commands ───   │  "makerarm"      │   ── commands ▶  (browser page)
+ local page: Share camera ── video ─────▶ └──────────────────┘
+```
+
+**Once:** in LiveKit Cloud → your project → **Settings → API Keys**, create a key. Put
+`LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` and `LIVEKIT_ROOM` in `.env`. Teammates need
+the **same four values** in their own `.env`. Send them privately (DM), never in the repo or a
+public channel.
+
+**On the arm laptop:**
+```bash
+python web_app.py --livekit          # or: ./run.sh web_app.py --livekit  /  .\run.ps1 web_app.py --livekit
+```
+1. Start the camera and click **Share camera with team**.
+2. **Power on** the arms here. Power-on is only possible on the arm laptop.
+3. The *Team* box shows who's connected and who has control. **Take control back** ends anyone's control.
+
+**On each teammate's laptop** (Windows, macOS or Linux; no arm hardware needed):
+```bash
+git clone https://github.com/hiromaruyama/TacoBot.git && cd TacoBot/rig/makerarm-kit
+bash setup.sh                        # Windows: powershell -ExecutionPolicy Bypass -File .\setup.ps1
+# put the team's LIVEKIT_* values in .env
+./run.sh remote.py                   # Windows: .\run.ps1 remote.py   ->  opens http://127.0.0.1:8770
+```
+Type your name and **Join**, and you'll see the arm camera. Press **Take control** to drive. Same
+controls as the local page: arm dropdown or `Q`/`E`, joints `1`–`7`, `←`/`→`, hold-to-repeat.
+
+**Rules (enforced by the arm laptop):**
+- **One controller at a time.** Others see who has control and must wait for *Release control*.
+- **Anyone can stop:** *Hold* and *Park & power off* work for every viewer.
+- **Power on and Clear fault stay on the arm laptop.**
+- If the controller's tab closes or loses the network, they lose control **within 5 s** and the
+  arms hold. After 60 s without commands, control is released too.
+- The local page always overrides: it can move the arms and take control back at any time.
+
+Wire format (JSON over LiveKit data, room `LIVEKIT_ROOM`): `arm/state` from `arm-host` at 5 Hz
+(`arms`, `controller`, `viewers`, `info`); `arm/cmd` to `arm-host` (`take`, `release`, `ping`,
+`jog {arm, joint, deg}`, `hold {arm}`, `park {arm}`); `arm/reply` back to the sender.
+
+Terminal-only alternative for a single arm: `python arm_server.py` next to the arm (type `MOVE`)
+and `python controller.py` anywhere (`1`–`7`, `a`/`d`, `[`/`]` step, `h` hold, `p` park, `q` quit).
 
 ## Safety built in
 
@@ -181,6 +220,8 @@ Messages are JSON over LiveKit data channels: `arm/cmd` (controller → arm) and
 - Each step is at most 10° and ramps at 15°/s. Targets stay 5° inside each joint's soft limits,
   never run more than 10° ahead of the real position, and a joint resting outside its safe band
   can only be moved back toward the inside.
+- Remote team control: one controller at a time, heartbeat every second (control lost after 5 s
+  of silence), anyone can Hold/Park, power-on and fault clearing only on the arm laptop.
 - If the remote operator leaves, the arm holds. Parking returns to the power-on pose before
   releasing torque. If that can't be verified, the SDK keeps holding and asks you to type `RELEASE`.
 

@@ -1,35 +1,48 @@
-"""Local web app: see the camera and move one or more Maker Arms from http://127.0.0.1:8765
+"""Web app: see the camera and move one or more Maker Arms, locally or with the whole team.
 
     python web_app.py --sim                         # two simulated arms (left, right)
     python web_app.py                               # real arms from ARM_PORTS (or ARM_PORT) in .env
     python web_app.py --arms left=COM9,right=COM10  # same, from the command line
+    python web_app.py --livekit                     # ...and let teammates join from anywhere (remote.py)
 
-Each arm has its own USB-CAN adapter (its own COM port). Pick the arm in the page's dropdown.
-An arm that can't be reached (unplugged, busy) shows as offline; the others still work.
+Local page: http://127.0.0.1:8765 . It only listens on 127.0.0.1, so powering the motors on is
+only possible on this laptop, next to the arms.
 
-The camera is read by the browser itself (no extra install). The server only listens on
-127.0.0.1, so only someone on this laptop, next to the arms, can power them up.
+With --livekit this process also joins the LiveKit room as "arm-host":
+  * it sends every arm's state to the room (topic arm/state, 5 Hz);
+  * teammates running remote.py see the camera this page shares and can drive the arms;
+  * ONE remote person controls at a time ("take control"); anyone can Hold or Park (stop actions);
+  * Power on and Clear fault stay local-only; if the controller leaves or goes idle, arms hold.
+
 Ctrl-C here parks every powered arm (returns to its start pose) and releases torque.
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import math
 import os
 import pathlib
+import time
 import webbrowser
 from dataclasses import dataclass, field
 
 from aiohttp import web
 
-from armkit import (DEFAULT_SPEED_DEG_S, JOINT_HELP, MAX_STEP_DEG, load_env, open_arm, safe_range_deg,
-                    safe_shutdown)
 from arm_server import ArmBridge
+from armkit import (DEFAULT_SPEED_DEG_S, JOINT_HELP, MAX_STEP_DEG, load_env, open_arm, required_env,
+                    safe_range_deg, safe_shutdown)
 
 HERE = pathlib.Path(__file__).resolve().parent
 STATIC = HERE / "static"
 OFF_MSG = "Motors off. Press Power on when the area is clear."
+LOCAL = "local"                    # origin of commands from this laptop's page
+REMOTE_ALLOWED = {"jog", "hold", "park"}
+ANYONE_ALLOWED = {"hold", "park"}  # stop actions: any remote viewer may use them
+CONTROL_IDLE_S = 60.0              # a controller that sends no commands loses control after this long
+HEARTBEAT_S = 5.0                  # ...and one whose page stops sending heartbeats (tab closed, Wi-Fi gone)
+STATE_HZ = 5
 
 
 @dataclass
@@ -76,34 +89,69 @@ def open_slots(arms: list[tuple[str, str | None]], sim: bool, speed: float) -> l
     return slots
 
 
-def make_app(slots: list[ArmSlot], sim: bool) -> web.Application:
-    by_id = {s.id: s for s in slots}
-    ref = next((s.bridge.arm for s in slots if s.bridge), None)
-    joints_info = []
-    if ref is not None:
-        for i, j in enumerate(ref.config.joints, start=1):
-            lo, hi = safe_range_deg(ref, i)
-            joints_info.append({"n": i, "name": (j.name or f"J{i}").replace("_", " "),
-                                "help": JOINT_HELP.get(i, "").split("(")[-1].rstrip(")"),
-                                "lo": round(lo, 1), "hi": round(hi, 1)})
+class Control:
+    """Who may drive the arms remotely. The local page can always act and can take control back."""
 
-    def slot_for(arm_id) -> ArmSlot:
-        slot = by_id.get(arm_id or "")
-        if slot is None:
-            raise web.HTTPBadRequest(text=f"unknown arm {arm_id!r}")
-        return slot
+    def __init__(self) -> None:
+        self.holder: str | None = None
+        self.last_used = 0.0
+        self.last_seen = 0.0
 
-    async def index(_):
-        return web.FileResponse(STATIC / "index.html")
+    def expired(self) -> bool:
+        now = time.monotonic()
+        return self.holder is not None and (now - self.last_used > CONTROL_IDLE_S or now - self.last_seen > HEARTBEAT_S)
 
-    async def info(_):
-        return web.json_response({"arms": [s.info() for s in slots], "joints": joints_info,
-                                  "max_step": MAX_STEP_DEG, "sim": sim})
+    def take(self, who: str) -> str:
+        if self.holder in (None, who) or self.expired():
+            self.holder, self.last_used = who, time.monotonic()
+            self.last_seen = self.last_used
+            return f"{who} has control"
+        return f"{self.holder} has control right now; ask them to release it"
 
-    async def state(request: web.Request):
-        slot = slot_for(request.query.get("arm"))
+    def release(self, who: str | None = None) -> str:
+        if who is None or who == self.holder:
+            prev, self.holder = self.holder, None
+            return f"control released{f' by {prev}' if prev else ''}"
+        return "you don't have control"
+
+    def touch(self, who: str) -> None:
+        if who == self.holder:
+            self.last_used = self.last_seen = time.monotonic()
+
+    def heartbeat(self, who: str) -> None:
+        if who == self.holder:
+            self.last_seen = time.monotonic()
+
+
+class Hub:
+    """All arms + the control lock. Both the local page and LiveKit go through run()."""
+
+    def __init__(self, slots: list[ArmSlot], sim: bool) -> None:
+        self.slots = slots
+        self.by_id = {s.id: s for s in slots}
+        self.sim = sim
+        self.control = Control()
+        self.viewers: set[str] = set()
+        self.livekit_on = False
+        ref = next((s.bridge.arm for s in slots if s.bridge), None)
+        self.joints: list[dict] = []
+        if ref is not None:
+            for i, j in enumerate(ref.config.joints, start=1):
+                lo, hi = safe_range_deg(ref, i)
+                self.joints.append({"n": i, "name": (j.name or f"J{i}").replace("_", " "),
+                                    "help": JOINT_HELP.get(i, "").split("(")[-1].rstrip(")"),
+                                    "lo": round(lo, 1), "hi": round(hi, 1)})
+
+    def info(self) -> dict:
+        return {"arms": [s.info() for s in self.slots], "joints": self.joints, "max_step": MAX_STEP_DEG,
+                "sim": self.sim, "livekit": self.livekit_on}
+
+    def team(self) -> dict:
+        return {"controller": self.control.holder, "viewers": sorted(self.viewers)}
+
+    async def state(self, slot: ArmSlot) -> dict:
         if slot.bridge is None:
-            return web.json_response({"offline": True, "error": slot.error})
+            return {"offline": True, "error": slot.error}
         try:
             await slot.bridge.run(slot.bridge.refresh_if_off)
         except Exception as exc:  # adapter/bus trouble: report it, don't spam tracebacks
@@ -112,21 +160,35 @@ def make_app(slots: list[ArmSlot], sim: bool) -> web.Application:
             if slot.error != reason:
                 print(f"[web] arm '{slot.id}': {reason}")
             slot.error = reason
-            return web.json_response({"offline": True, "error": reason})
+            return {"offline": True, "error": reason}
         if slot.error:
             print(f"[web] arm '{slot.id}' is answering again")
             slot.error = None
-        return web.json_response(await slot.bridge.run(slot.bridge.snapshot))
+        return await slot.bridge.run(slot.bridge.snapshot)
 
-    async def command(request: web.Request):
-        try:
-            msg = await request.json()
-        except ValueError:
-            return web.json_response({"msg": "bad json"}, status=400)
-        slot = slot_for(msg.get("arm"))
+    async def run(self, msg: dict, origin: str) -> str:
+        """Execute one command from the local page (origin=LOCAL) or a remote identity."""
+        cmd = msg.get("cmd")
+        if cmd == "take":
+            return self.control.take(origin) if origin != LOCAL else "the local page always has control"
+        if cmd == "release":
+            return self.control.release(None if origin == LOCAL else origin)
+        if origin != LOCAL:
+            if cmd not in REMOTE_ALLOWED:
+                return f"'{cmd}' is only allowed on the arm laptop"
+            if cmd not in ANYONE_ALLOWED:
+                if self.control.expired():
+                    print(f"[web] {self.control.release()} (idle)")
+                if self.control.holder != origin:
+                    who = self.control.holder
+                    return f"{who} has control" if who else "press Take control first"
+            self.control.touch(origin)
+        slot = self.by_id.get(str(msg.get("arm") or ""))
+        if slot is None:
+            return f"unknown arm {msg.get('arm')!r}"
         if slot.bridge is None:
-            return web.json_response({"msg": f"arm '{slot.id}' is offline: {slot.error}"})
-        bridge, cmd = slot.bridge, msg.get("cmd")
+            return f"arm '{slot.id}' is offline: {slot.error}"
+        bridge = slot.bridge
         async with slot.lock:  # one command at a time per arm
             try:
                 if cmd == "power":
@@ -143,17 +205,146 @@ def make_app(slots: list[ArmSlot], sim: bool) -> web.Application:
                         raise ValueError("deg")
                     result = await bridge.run(bridge.jog, joint, deg)
                 else:
-                    return web.json_response({"msg": f"unknown cmd {cmd!r}"}, status=400)
+                    return f"unknown cmd {cmd!r}"
             except (TypeError, ValueError):
-                return web.json_response({"msg": "bad joint/deg"}, status=400)
+                return "bad joint/deg"
             except Exception as exc:
                 result = f"error: {exc}"
-        bridge.last_msg = result
-        print(f"[web] {slot.id} {cmd}: {result}")
-        return web.json_response({"msg": result})
+        who = "" if origin == LOCAL else f" ({origin})"
+        bridge.last_msg = result + who
+        if cmd != "jog" or origin != LOCAL:
+            print(f"[web] {slot.id} {cmd}{who}: {result}")
+        return result
+
+    async def hold_all(self, why: str) -> None:
+        for slot in self.slots:
+            if slot.bridge is not None:
+                async with slot.lock:
+                    msg = await slot.bridge.run(slot.bridge.hold)
+                if msg == "holding":
+                    print(f"[web] {slot.id}: holding ({why})")
+
+
+# ── LiveKit bridge: the arms in a room, for the whole team ──
+async def livekit_task(hub: Hub) -> None:
+    from livekit import rtc
+
+    from lk import CMD_TOPIC, HOST_IDENTITY, REPLY_TOPIC, STATE_TOPIC, mint_token
+
+    url, key, secret = required_env("LIVEKIT_URL"), required_env("LIVEKIT_API_KEY"), required_env("LIVEKIT_API_SECRET")
+    room_name = required_env("LIVEKIT_ROOM")
+    room = rtc.Room()
+
+    async def reply(to: str, text: str) -> None:
+        try:
+            await room.local_participant.publish_data(json.dumps({"msg": text}).encode(), topic=REPLY_TOPIC,
+                                                      reliable=True, destination_identities=[to])
+        except Exception as exc:  # noqa: BLE001
+            print(f"[lk] reply to {to} failed: {exc}")
+
+    async def handle(who: str, msg: dict) -> None:
+        if msg.get("cmd") == "ping":  # controller heartbeat: no reply, keeps control alive
+            hub.control.heartbeat(who)
+            return
+        await reply(who, await hub.run(msg, origin=who))
+
+    @room.on("data_received")
+    def on_data(packet: rtc.DataPacket) -> None:
+        if packet.topic != CMD_TOPIC or packet.participant is None:
+            return
+        try:
+            msg = json.loads(packet.data.decode())
+        except (ValueError, UnicodeDecodeError):
+            return
+        if isinstance(msg, dict):
+            asyncio.ensure_future(handle(packet.participant.identity, msg))
+
+    @room.on("participant_connected")
+    def on_join(p: rtc.RemoteParticipant) -> None:
+        hub.viewers.add(p.identity)
+        print(f"[lk] {p.identity} joined")
+
+    @room.on("participant_disconnected")
+    def on_leave(p: rtc.RemoteParticipant) -> None:
+        hub.viewers.discard(p.identity)
+        print(f"[lk] {p.identity} left")
+        if p.identity == hub.control.holder:
+            hub.control.release()
+            asyncio.ensure_future(hub.hold_all(f"controller {p.identity} left"))
+
+    token = mint_token(key, secret, HOST_IDENTITY, room_name, publish_media=False, name="Arm host")
+    while True:  # (re)connect loop
+        try:
+            print(f"[lk] connecting to {url} room '{room_name}' as '{HOST_IDENTITY}' ...")
+            await room.connect(url, token)
+            hub.viewers = {p.identity for p in room.remote_participants.values()}
+            print(f"[lk] in the room; teammates join with: python remote.py   (room '{room_name}')")
+            while room.isconnected():
+                if hub.control.expired():
+                    who = hub.control.holder
+                    print(f"[lk] {hub.control.release()} ({who} went silent or idle)")
+                    await hub.hold_all(f"controller {who} went silent or idle")
+                arms = {s.id: await hub.state(s) for s in hub.slots}
+                payload = {"arms": arms, "info": hub.info(), **hub.team(), "t": time.time()}
+                await room.local_participant.publish_data(json.dumps(payload).encode(), topic=STATE_TOPIC,
+                                                          reliable=False)
+                await asyncio.sleep(1 / STATE_HZ)
+        except asyncio.CancelledError:
+            await room.disconnect()
+            raise
+        except Exception as exc:  # noqa: BLE001
+            print(f"[lk] connection problem: {exc}; retrying in 3 s (arms keep holding)")
+            if hub.control.holder:
+                hub.control.release()
+                await hub.hold_all("LiveKit connection lost")
+            await asyncio.sleep(3)
+
+
+# ── HTTP: the local page ──
+def make_app(hub: Hub, use_livekit: bool) -> web.Application:
+    async def index(_):
+        return web.FileResponse(STATIC / "index.html")
+
+    async def info(_):
+        return web.json_response(hub.info())
+
+    async def state(request: web.Request):
+        slot = hub.by_id.get(request.query.get("arm") or "")
+        if slot is None:
+            raise web.HTTPBadRequest(text="unknown arm")
+        return web.json_response({**await hub.state(slot), "team": hub.team()})
+
+    async def command(request: web.Request):
+        try:
+            msg = await request.json()
+        except ValueError:
+            return web.json_response({"msg": "bad json"}, status=400)
+        return web.json_response({"msg": await hub.run(msg, origin=LOCAL)})
+
+    async def camera_token(_):
+        """Token for this laptop's browser to publish its camera into the room."""
+        from lk import CAMERA_IDENTITY, mint_token
+        if not hub.livekit_on:
+            raise web.HTTPNotFound(text="start with --livekit to share the camera")
+        tok = mint_token(required_env("LIVEKIT_API_KEY"), required_env("LIVEKIT_API_SECRET"), CAMERA_IDENTITY,
+                         required_env("LIVEKIT_ROOM"), publish_media=True, name="Arm camera")
+        return web.json_response({"url": required_env("LIVEKIT_URL"), "token": tok})
+
+    async def lk_ctx(app):
+        task = None
+        if use_livekit:
+            hub.livekit_on = True
+            task = asyncio.create_task(livekit_task(hub))
+        yield
+        if task:
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
 
     async def on_cleanup(_):
-        for slot in slots:
+        for slot in hub.slots:
             if slot.bridge is None:
                 continue
             print(f"[web] parking arm '{slot.id}' before exit ...")
@@ -165,7 +356,9 @@ def make_app(slots: list[ArmSlot], sim: bool) -> web.Application:
     app.router.add_get("/api/info", info)
     app.router.add_get("/api/state", state)
     app.router.add_post("/api/cmd", command)
+    app.router.add_get("/api/camera-token", camera_token)
     app.router.add_static("/static", STATIC)
+    app.cleanup_ctx.append(lk_ctx)
     app.on_cleanup.append(on_cleanup)
     return app
 
@@ -174,11 +367,15 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--sim", action="store_true", help="simulated motors, no hardware")
     ap.add_argument("--arms", help="name=PORT list, e.g. left=COM9,right=COM10 (default: ARM_PORTS / ARM_PORT)")
+    ap.add_argument("--livekit", action="store_true", help="also put the arms in the LiveKit room for the team")
     ap.add_argument("--speed", type=float, default=DEFAULT_SPEED_DEG_S, help="deg/s ramp speed")
     ap.add_argument("--http-port", type=int, default=8765)
     ap.add_argument("--no-browser", action="store_true", help="don't open the browser")
     a = ap.parse_args()
     load_env()
+    if a.livekit:
+        for name in ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET", "LIVEKIT_ROOM"):
+            required_env(name)  # fail now, not after the arms are open
 
     spec = a.arms or os.environ.get("ARM_PORTS", "").strip()
     if spec:
@@ -198,7 +395,7 @@ def main() -> None:
     print(f"[web] open {url}   (Ctrl-C to park and quit)")
     if not a.no_browser:
         webbrowser.open(url)
-    web.run_app(make_app(slots, a.sim), host="127.0.0.1", port=a.http_port, print=None)
+    web.run_app(make_app(Hub(slots, a.sim), a.livekit), host="127.0.0.1", port=a.http_port, print=None)
 
 
 if __name__ == "__main__":

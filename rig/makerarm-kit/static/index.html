@@ -74,6 +74,9 @@
   .jbtn { display: flex; gap: 6px; }
   .jbtn button { width: 40px; height: 36px; padding: 0; font-size: 18px; }
   .hint { color: var(--muted); font-size: 12px; margin-top: 10px; }
+  .team { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .team .row:first-child { margin-top: 0; }
+  .muted { color: var(--muted); font-size: 13px; }
   kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; font-size: 11px; }
 </style>
 </head>
@@ -104,6 +107,19 @@
       <button id="btnCam">Start camera</button>
       <select id="camSelect" hidden></select>
       <label><input type="checkbox" id="mirror"> Mirror</label>
+    </div>
+    <div id="teamBox" class="team" hidden>
+      <div class="row" style="margin-top:0">
+        <strong>Team (LiveKit)</strong>
+        <span id="shareState" class="pill off">Camera not shared</span>
+        <span class="spacer"></span>
+        <button id="btnShare">Share camera with team</button>
+      </div>
+      <div class="row">
+        <span id="teamLine" class="muted">Nobody else connected yet.</span>
+        <span class="spacer"></span>
+        <button id="btnTakeBack" class="danger" hidden>Take control back</button>
+      </div>
     </div>
   </section>
 
@@ -292,6 +308,7 @@ async function poll() {
     await Promise.all(info.arms.filter(a => a.ok).map(async a => {
       const r = await fetch("/api/state?arm=" + encodeURIComponent(a.id));
       states[a.id] = await r.json();
+      if (states[a.id].team) renderTeam(states[a.id].team);
     }));
     renderState();
     refreshArmLabels();
@@ -323,9 +340,67 @@ document.addEventListener("keydown", (e) => {
   else if (k === " ") { e.preventDefault(); if (st() && st().on) send({ cmd: "hold" }); }
 });
 
+// ---------- team: share the camera through LiveKit, see who controls ----------
+let lkRoom = null, lkPub = null;
+function renderTeam(t) {
+  const others = (t.viewers || []).filter(v => v !== "arm-camera");
+  const ctl = t.controller;
+  $("teamLine").textContent = (others.length ? `Connected: ${others.join(", ")}` : "Nobody else connected yet.")
+    + (ctl ? `  ·  ${ctl} has control` : others.length ? "  ·  nobody has control" : "");
+  $("btnTakeBack").hidden = !ctl;
+}
+async function loadLiveKit() {
+  if (window.LivekitClient) return;
+  await new Promise((ok, fail) => {
+    const s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/livekit-client@2.20.2/dist/livekit-client.umd.js";
+    s.onload = ok; s.onerror = () => fail(new Error("could not load the LiveKit SDK (offline?)"));
+    document.head.appendChild(s);
+  });
+}
+async function shareCamera() {
+  const track = video.srcObject && video.srcObject.getVideoTracks()[0];
+  if (!track) { showMsg("Start the camera first, then share it."); return; }
+  try {
+    $("btnShare").disabled = true;
+    await loadLiveKit();
+    if (!lkRoom) {
+      const { url, token } = await (await fetch("/api/camera-token")).json();
+      lkRoom = new LivekitClient.Room({ adaptiveStream: false, dynacast: true });
+      lkRoom.on(LivekitClient.RoomEvent.Disconnected, () => { lkRoom = null; lkPub = null; setShared(false); });
+      await lkRoom.connect(url, token);
+    }
+    if (lkPub) await lkRoom.localParticipant.unpublishTrack(lkPub.track, false);
+    lkPub = await lkRoom.localParticipant.publishTrack(track, {
+      name: "camera", source: LivekitClient.Track.Source.Camera, simulcast: true,
+    });
+    setShared(true);
+  } catch (e) {
+    showMsg("Could not share the camera: " + e.message, true);
+  } finally { $("btnShare").disabled = false; }
+}
+async function stopSharing() {
+  if (lkRoom) await lkRoom.disconnect();
+  lkRoom = null; lkPub = null; setShared(false);
+}
+function setShared(on) {
+  $("shareState").textContent = on ? "Camera shared" : "Camera not shared";
+  $("shareState").className = "pill " + (on ? "on" : "off");
+  $("btnShare").textContent = on ? "Stop sharing" : "Share camera with team";
+}
+$("btnShare").onclick = () => (lkPub ? stopSharing() : shareCamera());
+$("btnTakeBack").onclick = async () => {
+  const r = await fetch("/api/cmd", { method: "POST", headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify({ cmd: "release" }) });
+  showMsg((await r.json()).msg);
+};
+// switching cameras while shared: republish the new track
+$("camSelect").addEventListener("change", () => setTimeout(() => { if (lkPub) shareCamera(); }, 800));
+
 (async () => {
   info = await (await fetch("/api/info")).json();
   $("simpill").hidden = !info.sim;
+  $("teamBox").hidden = !info.livekit;
   let saved = null; try { saved = localStorage.getItem("arm"); } catch (e) {}
   const first = info.arms.find(a => a.ok && a.id === saved) || info.arms.find(a => a.ok);
   armId = first.id;
