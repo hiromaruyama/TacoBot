@@ -1,0 +1,8 @@
+branch = "shared/agents-rig-update"
+lane = "shared"
+task = "AGENTS.md: document makerarm-kit, Maker Arm v1, team rules"
+owner = "claude-for-hiromaruyama"
+created = "2026-11-07T14:28"
+paths = [
+  "AGENTS.md",
+]
