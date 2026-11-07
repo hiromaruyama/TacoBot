@@ -6,3 +6,4 @@ logs/
 # reference repos cloned locally while building this kit (installed via requirements.txt instead)
 vendor/
 static/quesadilla_annotated.jpg
+groceries.json

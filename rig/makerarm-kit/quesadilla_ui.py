@@ -34,22 +34,33 @@ from tortilla_demo import MOVES, TEMP_NAMES, WARN_C, gripper_rad, settle
 
 HERE = Path(__file__).resolve().parent
 ANNOTATED = HERE / "static" / "quesadilla_annotated.jpg"
+GROCERIES = HERE / "groceries.json"
 DEFAULT_GOAL = "make a quesadilla"
 
 SYSTEM_PROMPT = """\
-You are the visual strategic planner for a MakerMods robot arm. You see one overhead photo of the
-workspace and a goal. Produce an ordered list of short imperative manipulation steps grounded ONLY
-in what the photo shows. For each step give a contact point: the pixel [x, y] in THIS image where
-the gripper should make contact. [0,0] is top-left; x right, y down.
+You are the visual strategic planner (intent decomposer) for a MakerMods robot arm driven by the
+Dream-1 policy. You see one overhead photo of the workspace and a goal.
+
+First identify the ingredients/tools the GOAL needs, and split them into which are VISIBLE in the
+photo ("present") and which are NOT ("missing"). Then decompose the goal into an ordered list of
+short imperative manipulation steps that Dream-1 can follow, grounded ONLY in the visible objects.
+For each step give a contact point: the pixel [x, y] where the gripper should make contact ([0,0] is
+top-left; x right, y down).
 - One atomic manipulation per step, named on the specific object you see.
-- If an ingredient the goal needs is not visible, do not refuse: plan the steps you CAN do with the
-  visible objects (e.g. only a tortilla -> lay it flat, fold it, press it). Never return empty unless
-  there is truly no manipulable object. At most nine steps, each under 200 characters.
-Respond with ONLY this JSON: {"reasoning": "<one sentence>", "steps": [{"task": "...", "contact_xy": [x, y]}, ...]}"""
+- Plan only steps doable with the VISIBLE objects (e.g. only a tortilla -> lay it flat, fold it,
+  press it). Never return an empty steps list unless there is truly no manipulable object.
+- At most nine steps, each under 200 characters.
+
+Respond with ONLY this JSON:
+{"reasoning": "<one sentence on the scene and plan>",
+ "present": ["tortilla", ...],
+ "missing": ["cheese", ...],
+ "steps": [{"task": "...", "contact_xy": [x, y]}, ...]}"""
 
 # Shared state the HTTP handlers read and the run thread writes.
 STATE: dict = {
     "state": "idle", "goal": "", "reasoning": "", "steps": [],
+    "present": [], "missing": [],
     "step": 0, "total": 0, "label": "", "task": "", "temps": [],
     "running": False, "done": False, "error": "", "log": [],
 }
@@ -93,14 +104,37 @@ def _astra(frame_rgb: np.ndarray, goal: str) -> tuple[str, list[dict]]:
     except json.JSONDecodeError:
         m = re.search(r"\{.*\}", text, flags=re.DOTALL)
         obj = json.loads(m.group(0)) if m else {}
+    if not isinstance(obj, dict):
+        obj = {}
     steps = []
-    for s in obj.get("steps", []) if isinstance(obj, dict) else []:
+    for s in obj.get("steps", []):
         task = " ".join(str(s.get("task", "")).split())[:200]
         xy = s.get("contact_xy")
         pt = [int(xy[0]), int(xy[1])] if isinstance(xy, (list, tuple)) and len(xy) == 2 else None
         if task:
             steps.append({"task": task, "contact_xy": pt})
-    return str(obj.get("reasoning", "")).strip(), steps[:9]
+    present = [str(x) for x in obj.get("present", []) if str(x).strip()]
+    missing = [str(x) for x in obj.get("missing", []) if str(x).strip()]
+    return str(obj.get("reasoning", "")).strip(), steps[:9], present, missing
+
+
+def _load_groceries() -> list[str]:
+    try:
+        return json.loads(GROCERIES.read_text())
+    except (OSError, ValueError):
+        return []
+
+
+def _add_groceries(items: list[str]) -> list[str]:
+    have = _load_groceries()
+    lower = {g.lower() for g in have}
+    for item in items:
+        item = str(item).strip()
+        if item and item.lower() not in lower:
+            have.append(item)
+            lower.add(item.lower())
+    GROCERIES.write_text(json.dumps(have, indent=2))
+    return have
 
 
 def _grab_global_frame() -> np.ndarray:
@@ -195,18 +229,27 @@ async def plan(request: web.Request) -> web.Response:
     log(f"planning: {goal!r}")
     try:
         frame = await asyncio.to_thread(_grab_global_frame)
-        reasoning, steps = await asyncio.to_thread(_astra, frame, goal)
-        if not steps:
-            STATE.update(state="idle", error="Astra returned no steps for this scene")
-            return web.json_response({"error": STATE["error"]}, status=200)
+        reasoning, steps, present, missing = await asyncio.to_thread(_astra, frame, goal)
         await asyncio.to_thread(_save_annotated, frame, steps)
-        STATE.update(reasoning=reasoning, steps=steps, state="idle")
-        log(f"plan: {len(steps)} steps")
-        return web.json_response({"reasoning": reasoning, "steps": steps})
+        STATE.update(reasoning=reasoning, steps=steps, present=present, missing=missing, state="idle")
+        if missing:
+            log(f"MISSING ingredients: {', '.join(missing)}")
+        log(f"plan: {len(steps)} steps, present={present}, missing={missing}")
+        return web.json_response({"reasoning": reasoning, "steps": steps, "present": present,
+                                 "missing": missing, "groceries": _load_groceries()})
     except Exception as exc:  # noqa: BLE001
         STATE.update(state="idle", error=str(exc))
         log(f"plan error: {exc}")
         return web.json_response({"error": str(exc)}, status=200)
+
+
+async def groceries(request: web.Request) -> web.Response:
+    if request.method == "POST":
+        items = (await request.json()).get("items", [])
+        have = await asyncio.to_thread(_add_groceries, items)
+        log(f"added to groceries: {', '.join(items)}")
+        return web.json_response({"groceries": have})
+    return web.json_response({"groceries": _load_groceries()})
 
 
 async def run(request: web.Request) -> web.Response:
@@ -249,30 +292,62 @@ button{font-size:16px;padding:10px 16px;border-radius:8px;border:0;cursor:pointe
 #make{background:#2e7d32;color:#fff}#stop{background:#b71c1c;color:#fff}
 img{width:100%;border-radius:10px;background:#000}
 ol{line-height:1.6}li.active{color:#7CFC00;font-weight:bold}
-#log{font-family:monospace;font-size:12px;white-space:pre-wrap;background:#000;padding:10px;border-radius:8px;height:160px;overflow:auto}
-.pill{display:inline-block;padding:2px 10px;border-radius:12px;background:#333;margin-left:8px}</style></head>
+#log{font-family:monospace;font-size:12px;white-space:pre-wrap;background:#000;padding:10px;border-radius:8px;height:150px;overflow:auto}
+.pill{display:inline-block;padding:2px 10px;border-radius:12px;background:#333;margin-left:8px}
+#alert{display:none;background:#5d2a00;border:1px solid #ff9800;color:#ffcc80;padding:12px;border-radius:8px;margin:10px 0}
+#alert button{background:#ff9800;color:#111}
+.chip{display:inline-block;background:#263238;color:#b2ebf2;padding:2px 10px;border-radius:12px;margin:2px}
+#groceries li{color:#ffd54f}</style></head>
 <body><div class=wrap>
-<h1>🌮 Quesadilla — Astra plans, the arm does it <span id=state class=pill>idle</span></h1>
+<h1>🌮 Quesadilla — Astra plans, Dream-1 does it <span id=state class=pill>idle</span></h1>
 <div><input id=goal value="make a quesadilla">
 <button id=make onclick=make()>Make it</button>
 <button id=stop onclick=stop()>STOP</button></div>
 <p id=reasoning style=color:#aaa></p>
+<div id=alert><b id=alertmsg></b>
+<div style=margin-top:8px>
+<button onclick=addGroceries()>Add to groceries list</button>
+<button onclick=run() style=background:#2e7d32;color:#fff>Proceed with what's here</button></div></div>
+<p>Present: <span id=present></span> &nbsp; Missing: <span id=missing></span></p>
 <div class=row>
 <div class=col><h3>Overhead view + contact trackers</h3><img id=shot src="/annotated.jpg?0"></div>
-<div class=col><h3>Plan</h3><ol id=steps></ol><h3>Log</h3><div id=log></div></div>
+<div class=col><h3>Plan (→ Dream-1)</h3><ol id=steps></ol>
+<h3>🛒 Groceries list</h3><ul id=groceries></ul>
+<h3>Log</h3><div id=log></div></div>
 </div></div>
 <script>
+let MISSING=[];
+function chips(arr){return (arr||[]).map(x=>'<span class=chip>'+x+'</span>').join(' ')||'<span style=color:#666>none</span>';}
+async function refreshGroceries(list){
+  const g=list||(await (await fetch('/groceries')).json()).groceries||[];
+  document.getElementById('groceries').innerHTML=g.map(x=>'<li>'+x+'</li>').join('')||'<li style=color:#666>empty</li>';
+}
 async function make(){
-  document.getElementById('reasoning').textContent='planning...';
+  document.getElementById('reasoning').textContent='Astra planning...';
+  document.getElementById('alert').style.display='none';
   const r=await (await fetch('/plan',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({goal:document.getElementById('goal').value})})).json();
   if(r.error){document.getElementById('reasoning').textContent='Astra: '+r.error;return;}
   document.getElementById('reasoning').textContent=r.reasoning||'';
   document.getElementById('shot').src='/annotated.jpg?'+Date.now();
+  document.getElementById('present').innerHTML=chips(r.present);
+  document.getElementById('missing').innerHTML=chips(r.missing);
   document.getElementById('steps').innerHTML=(r.steps||[]).map(s=>'<li>'+s.task+(s.contact_xy?' <span style=color:#7CFC00>@['+s.contact_xy+']</span>':'')+'</li>').join('');
-  if(confirm('Run '+(r.steps||[]).length+' steps on the arm? Area clear, hand on power.')) run();
+  refreshGroceries(r.groceries);
+  MISSING=r.missing||[];
+  if(MISSING.length){
+    document.getElementById('alertmsg').textContent='Missing '+MISSING.join(', ')+'! Should I add it to the groceries list?';
+    document.getElementById('alert').style.display='block';
+    return;  // wait for the human: add to groceries, or proceed with what's visible
+  }
+  if(confirm('Ingredients present. Run '+(r.steps||[]).length+' steps on Dream-1? Area clear, hand on power.')) run();
 }
-async function run(){await fetch('/run',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});}
+async function addGroceries(){
+  const r=await (await fetch('/groceries',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:MISSING})})).json();
+  refreshGroceries(r.groceries);
+  document.getElementById('alertmsg').textContent='Added '+MISSING.join(', ')+' to the groceries list.';
+}
+async function run(){document.getElementById('alert').style.display='none';await fetch('/run',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});}
 async function stop(){await fetch('/stop',{method:'POST'});}
 async function poll(){
   try{const s=await (await fetch('/status')).json();
@@ -283,7 +358,7 @@ async function poll(){
   }catch(e){}
   setTimeout(poll,500);
 }
-poll();
+refreshGroceries(); poll();
 </script></body></html>"""
 
 
@@ -300,6 +375,8 @@ def main() -> None:
     app = web.Application()
     app.router.add_get("/", index)
     app.router.add_post("/plan", plan)
+    app.router.add_get("/groceries", groceries)
+    app.router.add_post("/groceries", groceries)
     app.router.add_post("/run", run)
     app.router.add_post("/stop", stop)
     app.router.add_get("/status", status)
