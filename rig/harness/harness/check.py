@@ -33,6 +33,13 @@ async def check_room(url: str, api_key: str, api_secret: str, room: str, cameras
         tracks |= {t.name for t in p.tracks}
         print(f"  {p.identity:24} {role:9} {', '.join(names)}")
     ids = {p.identity for p in people}
+    if "arm-host" in ids and P.ROBOT_IDENTITY not in ids:
+        cam = "arm-camera" in ids
+        print("✓ arm-host               present: the Maker Arm kit (web_app.py --livekit). The harness runs in "
+              "arm-host mode: arm state, hold/park/jog, no Dream-1 prompts.")
+        print(f"{'✓' if cam else '✗'} arm-camera             {'present' if cam else 'missing'}"
+              + ("" if cam else ": no video until someone presses the camera share on the arm laptop's page"))
+        return True
     ok = True
     for who, why in ((P.ROBOT_IDENTITY, "cameras and arms (`uv run robot` on the server laptop)"),
                      (P.DREAM_TASKS_IDENTITY, "prompts (`uv run dream-1-tasks` on the server laptop)")):
@@ -44,6 +51,8 @@ async def check_room(url: str, api_key: str, api_secret: str, room: str, cameras
         print("✓ cameras published: " + ", ".join(c for c in cameras if c not in missing) if not missing else
               f"? camera tracks not listed by name: {missing} (Portal may name them differently; the harness "
               "will show what arrives)")
+    if ok and not ids & {P.ROBOT_IDENTITY, "arm-host"}:
+        ok = False
     if P.HARNESS_IDENTITY in ids:
         print(f"! {P.HARNESS_IDENTITY!r} is already in the room: another harness runs. Use --identity to pick "
               "another name, or the newer one will kick the older out.")

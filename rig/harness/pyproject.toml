@@ -10,6 +10,7 @@ dependencies = [
     "numpy>=1.24",
     "opencv-python-headless>=4.10",
     "python-dotenv>=1",
+    "livekit>=1.0",
 ]
 
 # `uv run harness` (the service + web UI), `uv run harnessctl ...` (CLI against a running harness),
@@ -18,6 +19,7 @@ dependencies = [
 harness = "harness.server:run"
 harnessctl = "harness.cli:main"
 fake-rig = "mock.fake_rig:run"
+fake-armhost = "mock.fake_armhost:run"
 
 [build-system]
 requires = ["setuptools>=69"]

@@ -98,6 +98,44 @@ the page shows why it isn't connected.
 `HARNESS_TOKEN` and pass `--host 0.0.0.0`. Then open `http://host:8770/?token=…`, or send
 `Authorization: Bearer …` with each request.
 
+## arm-host mode (the Maker Arm kit)
+
+If the arm laptop runs the Maker Arm kit's web app (`rig/makerarm-kit`, `python web_app.py --livekit` on
+`rig/makerarm-web-kit`) instead of upstream's robot, the harness detects `arm-host` in the room and switches to the
+kit's protocol. To force a mode, pass `--mode arm-host` or `--mode portal`.
+
+```bash
+cd rig/harness
+uv run harness --check        # ✓ arm-host … ✓/✗ arm-camera
+uv run harness                # auto-detects arm-host mode → http://127.0.0.1:8770
+```
+
+In this mode you get:
+
+- **Camera.** You see whatever the arm laptop shares. On its page (http://127.0.0.1:8765), press **Start camera**,
+  then **Share camera with team**. That joins the room as `arm-camera`. Until someone does that, there is no video.
+- **Arm state.** Each arm shows whether it's powered, its state, any fault, the host's last message, and each joint's
+  angle, target and temperature (orange from 60 °C, red above 70 °C).
+- **Control.** Press **Take control**, then use the **−/+** jog buttons. The step is 0.5–10°, and holding a button
+  repeats it. **Hold** and **Park** work per arm, and **HOLD ALL** (or Space) holds every arm. While the harness has
+  control it sends heartbeats. The arm laptop drops a controller after 5 s without a heartbeat or 60 s without a
+  command, and then holds the arms.
+- **What only the arm laptop can do.** Power on and Clear fault happen only there, by the kit's design. There is no
+  Dream-1 in the kit, so prompts are disabled. To send prompts, run upstream's `uv run robot` and
+  `uv run dream-1-tasks` in the room instead, after stopping the kit, because only one program can hold the arms'
+  USB adapters.
+
+From the CLI: `harnessctl arm take`, `harnessctl arm jog left 1 2`, `harnessctl arm hold`,
+`harnessctl arm park left`, `harnessctl arm release`, and `harnessctl snapshot arm-camera_camera out.jpg`.
+
+To try it without the arm laptop:
+
+```bash
+livekit-server --dev
+uv run fake-armhost            # a fake arm-host (two simulated arms) + a fake arm-camera
+uv run harness --env mock/dev.env
+```
+
 ## UI keys
 
 | Key | Action |

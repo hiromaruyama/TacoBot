@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rig Harness</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --panel: #ffffff; --ink: #16181d; --muted: #667085; --line: #e3e6ea;
+    --accent: #2563eb; --ok: #15803d; --warn: #b45309; --bad: #b91c1c; --hold: #b91c1c;
+    --chip: #eef1f5; --video-bg: #0b0d10; --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e1013; --panel: #171a1f; --ink: #e7e9ee; --muted: #8b93a3; --line: #262a31;
+      --accent: #60a5fa; --ok: #4ade80; --warn: #fbbf24; --bad: #f87171; --hold: #dc2626; --chip: #22262d;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.4 system-ui, -apple-system, sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; background: var(--panel);
+           border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; flex-wrap: wrap; }
+  header h1 { font-size: 15px; margin: 0 8px 0 0; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px;
+          background: var(--chip); font-size: 12px; white-space: nowrap; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); } .dot.warn { background: var(--warn); }
+  .driver { font-weight: 600; font-size: 13px; padding: 4px 12px; border-radius: 6px; background: var(--chip); }
+  .driver.me { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent); }
+  .driver.other { background: color-mix(in srgb, var(--warn) 22%, transparent); color: var(--warn); }
+  .spacer { flex: 1; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--chip); color: var(--ink);
+           padding: 7px 12px; border-radius: 7px; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--muted); }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.hold { background: var(--hold); border-color: var(--hold); color: #fff; font-weight: 700; padding: 8px 18px; }
+  button.danger { color: var(--bad); }
+  button.sm { padding: 2px 9px; font-size: 13px; min-width: 30px; }
+  #banner { margin: 14px 16px 0; padding: 10px 14px; border-radius: 8px; font-size: 13px;
+            background: color-mix(in srgb, var(--warn) 16%, var(--panel)); border: 1px solid var(--warn); }
+  code { font-family: var(--mono); font-size: 12px; }
+  main { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(320px, 1fr); gap: 14px; padding: 14px 16px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; min-width: 0; }
+  .panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; }
+  .col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .cams { display: grid; grid-template-columns: 1fr; gap: 8px; }
+  .cams.many { grid-template-columns: 1fr 1fr; }
+  .cam { position: relative; background: var(--video-bg); border-radius: 8px; overflow: hidden; aspect-ratio: 16/9; }
+  .cam img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .cam .label { position: absolute; left: 8px; top: 6px; font-size: 11px; color: #fff; background: #0008;
+                padding: 2px 7px; border-radius: 4px; font-family: var(--mono); }
+  .nocam { aspect-ratio: 16/9; border-radius: 8px; background: var(--video-bg); color: #cfd3da; display: flex;
+           align-items: center; justify-content: center; text-align: center; padding: 24px; font-size: 13px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .arm { border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+  .arm + .arm { margin-top: 10px; }
+  .arm h3 { margin: 0; font-size: 14px; }
+  .status { font-size: 12px; margin: 4px 0 8px; }
+  .status.bad { color: var(--bad); } .status.on { color: var(--ok); }
+  table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
+  th { text-align: left; color: var(--muted); font-weight: 500; padding: 2px 4px; }
+  td { padding: 2px 4px; white-space: nowrap; }
+  td.bar { width: 35%; }
+  td.hot { color: var(--warn); } td.vhot { color: var(--bad); font-weight: 700; }
+  .track { position: relative; height: 8px; background: var(--chip); border-radius: 4px; }
+  .track .s, .track .a { position: absolute; top: -2px; width: 3px; height: 12px; border-radius: 2px; }
+  .track .s { background: var(--ink); } .track .a { background: var(--accent); opacity: .7; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 13px; margin: 0; }
+  .kv dt { color: var(--muted); } .kv dd { margin: 0; overflow-wrap: anywhere; }
+  .log { font-family: var(--mono); font-size: 11.5px; max-height: 280px; overflow: auto; }
+  .log div { padding: 2px 0; border-bottom: 1px dashed var(--line); }
+  .log .error { color: var(--bad); } .log .warn { color: var(--warn); } .log .t { color: var(--muted); margin-right: 6px; }
+  select { font: inherit; padding: 5px 8px; border-radius: 7px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+  #toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--bg);
+           padding: 8px 14px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none;
+           max-width: calc(100% - 32px); }
+  #toast.show { opacity: .95; } #toast.err { background: var(--bad); color: #fff; }
+  kbd { font-family: var(--mono); font-size: 11px; padding: 0 4px; border: 1px solid var(--line); border-radius: 3px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Rig Harness <span class="muted">· Maker Arm kit</span></h1>
+  <span class="pill" id="link"><span class="dot"></span><span>connecting…</span></span>
+  <span class="pill" id="hostPill"><span class="dot"></span><span>arm-host</span></span>
+  <span class="pill" id="camPill"><span class="dot"></span><span>camera</span></span>
+  <span class="driver" id="driver">—</span>
+  <span class="spacer"></span>
+  <button class="hold" id="holdBtn" title="Hold every powered arm where it is (Space). Anyone may.">HOLD ALL</button>
+</header>
+<div id="banner" hidden></div>
+
+<main>
+  <div class="col">
+    <section class="panel">
+      <h2>Camera</h2>
+      <div id="cams"></div>
+    </section>
+    <section class="panel">
+      <h2>Arms <span class="muted" id="age"></span></h2>
+      <div class="row" style="margin-bottom:10px">
+        <span class="muted">Jog step</span>
+        <select id="step"></select>
+        <span class="muted">Hold a ± button to keep moving. Measured <span style="display:inline-block;width:10px;height:3px;background:var(--ink);vertical-align:middle"></span>
+          target <span style="display:inline-block;width:10px;height:3px;background:var(--accent);vertical-align:middle"></span></span>
+      </div>
+      <div id="arms" class="muted">waiting for arm state…</div>
+    </section>
+  </div>
+
+  <div class="col">
+    <section class="panel">
+      <h2>Remote control</h2>
+      <dl class="kv" style="margin-bottom:10px">
+        <dt>Driving</dt><dd id="ctl">—</dd>
+        <dt>Viewers</dt><dd id="viewers">—</dd>
+      </dl>
+      <div class="row">
+        <button class="primary" id="takeBtn">Take control</button>
+        <button id="releaseBtn">Release control</button>
+      </div>
+      <p class="muted" style="margin:8px 0 0">One person drives at a time. The harness sends heartbeats while it has
+        control; the arm laptop drops a silent or idle controller (60 s) and holds the arms. Power on, and Clear fault,
+        are only possible on the arm laptop.</p>
+    </section>
+
+    <section class="panel">
+      <h2>Prompt Dream-1</h2>
+      <p class="muted" style="margin:0">Not available: this room runs the Maker Arm kit (<code>web_app.py --livekit</code>),
+        which has no Dream-1. To prompt, run upstream's <code>uv run robot</code> and <code>uv run dream-1-tasks</code> on
+        the arm laptop in this room (stop the kit first: only one program can hold the arms' adapters); the harness then
+        switches to its Dream-1 view on restart.</p>
+    </section>
+
+    <section class="panel">
+      <h2>Room</h2>
+      <dl class="kv" id="room"></dl>
+    </section>
+
+    <section class="panel">
+      <h2>Events</h2>
+      <div class="log" id="log"></div>
+    </section>
+  </div>
+</main>
+<div id="toast"></div>
+
+<script>
+const TOKEN = new URLSearchParams(location.search).get('token') || '';
+const q = TOKEN ? `?token=${encodeURIComponent(TOKEN)}` : '';
+const $ = (id) => document.getElementById(id);
+let S = null, camsKey = null, armsKey = null;
+
+function toast(msg, err) {
+  const t = $('toast'); t.textContent = msg; t.className = 'show' + (err ? ' err' : '');
+  clearTimeout(toast.h); toast.h = setTimeout(() => (t.className = ''), err ? 5000 : 2200);
+}
+async function post(path, body, quiet) {
+  try {
+    const r = await fetch(path + q, { method: 'POST', headers: { 'Content-Type': 'application/json',
+      ...(TOKEN ? { Authorization: 'Bearer ' + TOKEN } : {}) }, body: JSON.stringify(body || {}) });
+    const j = await r.json();
+    if (!j.ok) { toast(j.error || 'failed', true); return null; }
+    if (!quiet) toast(typeof j.result === 'string' ? j.result : 'ok');
+    return j.result;
+  } catch (e) { toast(String(e), true); return null; }
+}
+function setPill(id, cls, text) { const p = $(id); p.querySelector('.dot').className = 'dot ' + cls; p.lastElementChild.textContent = text; }
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+function renderCams(cams) {
+  const names = Object.keys(cams);
+  const key = names.join(',');
+  if (key !== camsKey) {
+    camsKey = key;
+    $('cams').className = 'cams' + (names.length > 1 ? ' many' : '');
+    $('cams').innerHTML = names.length ? names.map(n => `
+      <div class="cam" id="cam-${n}"><img alt="${n}" src="/video/${n}.mjpg${q}"><span class="label">${n} <span class="meta"></span></span></div>`).join('')
+      : `<div class="nocam">No camera in the room yet.<br>On the arm laptop's page (http://127.0.0.1:8765) press
+         <b>&nbsp;Start camera&nbsp;</b> then <b>&nbsp;Share camera with team&nbsp;</b>.</div>`;
+  }
+  for (const [n, c] of Object.entries(cams)) {
+    const el = document.querySelector(`#cam-${CSS.escape(n)} .meta`);
+    if (el) el.textContent = c.age_s == null ? 'waiting…' : c.age_s > 2 ? `stale ${c.age_s.toFixed(0)}s` : `${c.fps} fps`;
+  }
+}
+
+function joints(s) { return (s.info && s.info.joints && s.info.joints.length) ? s.info.joints
+  : [1, 2, 3, 4, 5, 6, 7].map(n => ({ n, name: 'J' + n, lo: -180, hi: 180 })); }
+const pct = (v, lo, hi) => v == null ? null : Math.max(0, Math.min(100, (v - lo) / ((hi - lo) || 1) * 100));
+
+function renderArms(s) {
+  const arms = s.arms;
+  if (!arms) { $('arms').className = 'muted'; $('arms').textContent = s.host_present ? 'waiting for arm state…' : 'no arm-host in the room'; return; }
+  $('arms').className = '';
+  const js = joints(s);
+  const key = Object.keys(arms).join(',') + '|' + js.map(j => j.n).join(',');
+  if (key !== armsKey) {
+    armsKey = key;
+    $('arms').innerHTML = Object.keys(arms).map(id => `
+      <div class="arm" data-arm="${esc(id)}">
+        <div class="row" style="justify-content:space-between">
+          <h3>${esc(id)}</h3>
+          <div class="row"><button class="sm" data-act="hold">Hold</button>
+            <button class="sm danger" data-act="park">Park</button></div>
+        </div>
+        <div class="status"></div>
+        <table><tr><th>joint</th><th>°</th><th>target</th><th>°C</th><th></th><th></th></tr>
+          ${js.map(j => `<tr data-j="${j.n}"><td title="${esc(j.help || '')}">${j.n} ${esc(j.name)}</td>
+            <td class="v">–</td><td class="tg">–</td><td class="tc">–</td>
+            <td class="bar"><div class="track"><span class="a"></span><span class="s"></span></div></td>
+            <td><button class="sm jog" data-d="-1">−</button> <button class="sm jog" data-d="1">+</button></td></tr>`).join('')}
+        </table>
+      </div>`).join('');
+  }
+  for (const [id, a] of Object.entries(arms)) {
+    const box = document.querySelector(`.arm[data-arm="${CSS.escape(id)}"]`); if (!box) continue;
+    const st = box.querySelector('.status');
+    if (a.offline) { st.className = 'status bad'; st.textContent = 'OFFLINE: ' + (a.error || ''); }
+    else { st.className = 'status ' + (a.fault ? 'bad' : a.on ? 'on' : '');
+      st.textContent = `${a.on ? 'POWERED' : 'motors off'} · ${a.state || ''}${a.fault ? ' · FAULT ' + a.fault : ''} — ${a.msg || ''}`; }
+    const canJog = s.i_control && a.on && !a.offline;
+    box.querySelectorAll('.jog').forEach(b => b.disabled = !canJog);
+    box.querySelector('[data-act="hold"]').disabled = !a.on;
+    box.querySelector('[data-act="park"]').disabled = !a.on;
+    js.forEach((j, i) => {
+      const tr = box.querySelector(`tr[data-j="${j.n}"]`); if (!tr) return;
+      const v = a.joints_deg ? a.joints_deg[i] : null, t = a.targets_deg ? a.targets_deg[i] : null;
+      const tc = a.temps_c ? a.temps_c[i] : null;
+      tr.querySelector('.v').textContent = v == null ? '–' : v.toFixed(1);
+      tr.querySelector('.tg').textContent = t == null ? '–' : t.toFixed(1);
+      const tcel = tr.querySelector('.tc'); tcel.textContent = tc == null ? '–' : tc.toFixed(0);
+      tcel.className = 'tc' + (tc > 70 ? ' vhot' : tc >= 60 ? ' hot' : '');
+      const ps = pct(v, j.lo, j.hi), pa = pct(t, j.lo, j.hi);
+      const s_ = tr.querySelector('.s'), a_ = tr.querySelector('.a');
+      s_.style.display = ps == null ? 'none' : ''; if (ps != null) s_.style.left = `calc(${ps}% - 1px)`;
+      a_.style.display = pa == null ? 'none' : ''; if (pa != null) a_.style.left = `calc(${pa}% - 1px)`;
+    });
+  }
+}
+
+function render(s) {
+  S = s;
+  setPill('link', s.connected ? 'ok' : 'bad', s.connected ? `room ${s.room}` : 'not connected');
+  setPill('hostPill', s.host_present ? 'ok' : 'bad', s.host_present ? 'arm-host' : 'no arm-host');
+  const ncam = Object.keys(s.cameras || {}).length;
+  setPill('camPill', ncam ? 'ok' : 'warn', ncam ? `${ncam} camera${ncam > 1 ? 's' : ''}` : 'no camera');
+  const c = s.controller;
+  $('driver').textContent = s.i_control ? 'you have control' : c ? `${c} has control` : 'nobody controls remotely';
+  $('driver').className = 'driver ' + (s.i_control ? 'me' : c ? 'other' : '');
+  $('ctl').textContent = s.i_control ? `this harness (${s.identity})` : c || 'nobody';
+  $('viewers').textContent = (s.viewers || []).join(', ') || '—';
+  $('takeBtn').disabled = !s.host_present || s.i_control;
+  $('releaseBtn').disabled = !s.i_control;
+  $('age').textContent = s.host_age_s == null ? '' : s.host_age_s < 1.5 ? '· live' : `· ${s.host_age_s.toFixed(0)} s old`;
+
+  const b = $('banner');
+  let msg = '';
+  if (!s.connected) msg = `<b>Not connected to room <code>${esc(s.room)}</code>.</b> Retrying. <span class="muted">${esc(s.connect_error || '')}</span>`;
+  else if (!s.host_present) msg = `<b>arm-host is not in room <code>${esc(s.room)}</code>.</b> On the arm laptop run <code>python web_app.py --livekit</code> (rig/makerarm-kit).`;
+  b.hidden = !msg; b.innerHTML = msg;
+
+  $('room').innerHTML = [['in the room', (s.participants || []).join(', ') || '—'], ['harness id', s.identity],
+    ['arm laptop', s.info ? (s.info.sim ? 'simulated arms' : 'real arms') : '—']]
+    .map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join('');
+
+  const max = (s.info && s.info.max_step) || 10;
+  const steps = [0.5, 1, 2, 5, 10].filter(x => x <= max);
+  if ($('step').dataset.k !== String(max)) {
+    $('step').dataset.k = String(max);
+    $('step').innerHTML = steps.map(x => `<option value="${x}" ${x === 2 ? 'selected' : ''}>${x}°</option>`).join('');
+  }
+  renderCams(s.cameras || {});
+  renderArms(s);
+}
+
+function addEvent(e) {
+  const div = document.createElement('div');
+  div.className = e.level;
+  div.innerHTML = `<span class="t">${new Date(e.t * 1000).toLocaleTimeString()}</span>[${e.kind}] `;
+  div.appendChild(document.createTextNode(e.text));
+  $('log').prepend(div);
+  while ($('log').children.length > 300) $('log').lastChild.remove();
+}
+
+function connect() {
+  const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws${q}`);
+  ws.onmessage = (m) => {
+    const msg = JSON.parse(m.data);
+    if (msg.type === 'state') render(msg.state);
+    else if (msg.type === 'event') addEvent(msg.event);
+    else if (msg.type === 'events') { $('log').innerHTML = ''; msg.events.forEach(addEvent); }
+  };
+  ws.onclose = () => { setPill('link', 'bad', 'harness offline'); setTimeout(connect, 1500); };
+}
+
+// Jog: one step per press; holding the button repeats every 300 ms (the host caps how far targets lead).
+let repeat = null;
+function stopRepeat() { clearInterval(repeat); repeat = null; }
+$('arms').addEventListener('pointerdown', (e) => {
+  const b = e.target.closest('.jog'); if (!b || b.disabled) return;
+  const arm = b.closest('.arm').dataset.arm, joint = +b.closest('tr').dataset.j;
+  const deg = (+b.dataset.d) * (+$('step').value);
+  const send = () => post('/api/arm/jog', { arm, joint, deg }, true);
+  send(); stopRepeat(); repeat = setInterval(send, 300);
+});
+['pointerup', 'pointerleave', 'pointercancel', 'blur'].forEach(ev => window.addEventListener(ev, stopRepeat));
+$('arms').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-act]'); if (!b) return;
+  const arm = b.closest('.arm').dataset.arm;
+  if (b.dataset.act === 'park' && !confirm(`Park ${arm}: it walks back to its power-on pose and switches torque OFF. Power on again only on the arm laptop. Park now?`)) return;
+  post('/api/arm/' + b.dataset.act, { arm });
+});
+$('takeBtn').onclick = () => post('/api/arm/take');
+$('releaseBtn').onclick = () => post('/api/arm/release_control');
+$('holdBtn').onclick = () => post('/api/release');
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' && !['TEXTAREA', 'INPUT', 'BUTTON', 'SELECT'].includes(document.activeElement.tagName)) {
+    e.preventDefault(); post('/api/release');
+  }
+});
+connect();
+</script>
+</body>
+</html>

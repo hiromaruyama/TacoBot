@@ -7,6 +7,7 @@
     harnessctl snapshot overhead_camera out.jpg
     harnessctl watch                        # stream the event log
     harnessctl seq arm 0 | start | done | retry | teleop | stop | show
+    harnessctl arm take | release | hold [left] | park left | jog left 1 2.0     # arm-host mode (Maker Arm kit)
 
 Set HARNESS_URL (default http://127.0.0.1:8770) and HARNESS_TOKEN if the harness requires one.
 """
@@ -59,7 +60,31 @@ class Client:
         return self._req("GET", f"/snapshot/{camera}.jpg", raw=True)
 
 
+def format_armhost(s: dict) -> str:
+    lines = [f"link      {'connected' if s['connected'] else 'NOT connected: ' + str(s.get('connect_error'))}"
+             f"  room={s['room']}  mode=arm-host (Maker Arm kit; no Dream-1)",
+             f"arm-host  {'present' if s.get('host_present') else 'MISSING'}  in room: {s.get('participants')}",
+             f"control   {'this harness' if s.get('i_control') else s.get('controller') or 'nobody'}"
+             f"   viewers={s.get('viewers')}"]
+    for arm, a in (s.get("arms") or {}).items():
+        if a.get("offline"):
+            lines.append(f"arm {arm:6} OFFLINE: {a.get('error')}")
+            continue
+        lines.append(f"arm {arm:6} {'POWERED' if a.get('on') else 'off'} {a.get('state')}"
+                     f"{' FAULT ' + str(a['fault']) if a.get('fault') else ''} — {a.get('msg')}")
+        joints = a.get("joints_deg") or []
+        lines.append("           " + "  ".join(f"J{i + 1}={'-' if v is None else f'{v:.1f}'}°"
+                                              for i, v in enumerate(joints)))
+    for name, c in (s.get("cameras") or {}).items():
+        lines.append(f"camera    {name:20} {c['width']}x{c['height']}  {c['fps']} fps  age {c['age_s']}s")
+    if not s.get("cameras"):
+        lines.append("camera    none: press 'Share camera with team' on the arm laptop's page")
+    return "\n".join(lines)
+
+
 def format_status(s: dict) -> str:
+    if s.get("mode") == "arm-host":
+        return format_armhost(s)
     lines = [f"link      {'connected' if s['connected'] else 'NOT connected: ' + str(s.get('connect_error'))}"
              f"  room={s['room']}  robot={s.get('robot')}",
              f"control   {s.get('active_operator') or 'nobody (arms hold)'}"
@@ -116,6 +141,9 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("seq")
     p.add_argument("action", choices=["show", "arm", "start", "done", "retry", "teleop", "stop", "load"])
     p.add_argument("arg", nargs="?")
+    p = sub.add_parser("arm", help="arm-host mode: take | release | hold [ARM] | park ARM | jog ARM JOINT DEG")
+    p.add_argument("action", choices=["take", "release", "hold", "park", "jog"])
+    p.add_argument("rest", nargs="*")
     args = ap.parse_args(argv)
     c = Client(args.url)
 
@@ -145,6 +173,19 @@ def main(argv: list[str] | None = None) -> int:
                 time.sleep(0.5)
         except KeyboardInterrupt:
             return 0
+    if args.cmd == "arm":
+        a, rest = args.action, args.rest
+        if a == "take":
+            return show(c.post("/api/arm/take"))
+        if a == "release":
+            return show(c.post("/api/arm/release_control"))
+        if a == "hold":
+            return show(c.post("/api/arm/hold", {"arm": rest[0]} if rest else {}))
+        if a == "park" and len(rest) == 1:
+            return show(c.post("/api/arm/park", {"arm": rest[0]}))
+        if a == "jog" and len(rest) == 3:
+            return show(c.post("/api/arm/jog", {"arm": rest[0], "joint": int(rest[1]), "deg": float(rest[2])}))
+        ap.error("usage: arm take | release | hold [ARM] | park ARM | jog ARM JOINT DEG")
     if args.cmd == "seq":
         if args.action == "show":
             print(json.dumps(c.get("/api/state").get("sequence"), indent=2))

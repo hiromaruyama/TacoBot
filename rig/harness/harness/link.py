@@ -85,18 +85,62 @@ def encode_jpeg(data: bytes, width: int, height: int, max_width: int, quality: i
     return buf.tobytes(), width, height
 
 
-class RigLink:
-    """Keeps an Observer connected (retrying while the robot is not up) and exposes the rig's live picture."""
+class LinkBase:
+    """What every mode shares: the event log (with live listeners) and the cameras the web server streams."""
 
-    def __init__(self, settings: Settings, observer_factory: Callable[[], Any] | None = None) -> None:
+    mode = "base"
+
+    def __init__(self, settings: Settings) -> None:
         self.s = settings
-        self._observer_factory = observer_factory or self._default_observer
-        self.obs: Any = None
         self.connected = False
         self.connect_error: str | None = None
-        self.tracks: list[str] = list(P.CAMERAS)
-        self.cameras: dict[str, Camera] = {name: Camera() for name in self.tracks}
+        self.tracks: list[str] = []
+        self.cameras: dict[str, Camera] = {}
         self.frame_event = asyncio.Event()  # set (then replaced) whenever any camera has a new frame
+        self.events: collections.deque = collections.deque(maxlen=500)
+        self._event_seq = 0
+        self._listeners: set[asyncio.Queue] = set()
+
+    def new_frames(self) -> None:
+        self.frame_event.set()
+        self.frame_event = asyncio.Event()
+
+    def event(self, kind: str, text: str, level: str = "info") -> None:
+        self._event_seq += 1
+        item = {"id": self._event_seq, "t": time.time(), "kind": kind, "level": level, "text": text}
+        self.events.append(item)
+        {"warn": log.warning, "error": log.error}.get(level, log.info)("[%s] %s", kind, text)
+        for q in list(self._listeners):
+            try:
+                q.put_nowait(item)
+            except asyncio.QueueFull:
+                pass
+
+    def listen(self) -> asyncio.Queue:
+        q: asyncio.Queue = asyncio.Queue(maxsize=200)
+        self._listeners.add(q)
+        return q
+
+    def unlisten(self, q: asyncio.Queue) -> None:
+        self._listeners.discard(q)
+
+    def camera_info(self, now: float) -> dict:
+        age = lambda t: round(now - t, 2) if t else None  # noqa: E731
+        return {name: {"width": c.width, "height": c.height, "age_s": age(c.seen), "fps": round(c.fps(now), 1),
+                       "seq": c.seq} for name, c in self.cameras.items() if name in self.tracks}
+
+
+class RigLink(LinkBase):
+    """Keeps an Observer connected (retrying while the robot is not up) and exposes the rig's live picture."""
+
+    mode = "portal"
+
+    def __init__(self, settings: Settings, observer_factory: Callable[[], Any] | None = None) -> None:
+        super().__init__(settings)
+        self._observer_factory = observer_factory or self._default_observer
+        self.obs: Any = None
+        self.tracks = list(P.CAMERAS)
+        self.cameras = {name: Camera() for name in self.tracks}
         self.state: dict[str, float] | None = None
         self.state_seen = 0.0
         self.action: dict[str, float] | None = None
@@ -107,9 +151,6 @@ class RigLink:
         self.dream: dict | None = None  # last dream.status reply
         self.dream_error: str | None = None
         self.dream_seen = 0.0
-        self.events: collections.deque = collections.deque(maxlen=500)
-        self._event_seq = 0
-        self._listeners: set[asyncio.Queue] = set()
         self._task: asyncio.Task | None = None
         self._status_inflight = False
 
@@ -221,8 +262,7 @@ class RigLink:
             cam.jpeg, cam.width, cam.height, cam.timestamp_us, cam.seen = jpeg, w, h, ts, now
             cam.seq += 1
             cam.arrivals.append(now)
-        self.frame_event.set()
-        self.frame_event = asyncio.Event()
+        self.new_frames()
 
     async def _refresh_status(self) -> None:
         self._status_inflight = True
@@ -304,31 +344,12 @@ class RigLink:
         except Exception:  # noqa: BLE001
             return default
 
-    def event(self, kind: str, text: str, level: str = "info") -> None:
-        self._event_seq += 1
-        item = {"id": self._event_seq, "t": time.time(), "kind": kind, "level": level, "text": text}
-        self.events.append(item)
-        getattr(log, "warning" if level == "warn" else level if level in ("info", "error") else "info")(
-            "[%s] %s", kind, text)
-        for q in list(self._listeners):
-            try:
-                q.put_nowait(item)
-            except asyncio.QueueFull:
-                pass
-
-    def listen(self) -> asyncio.Queue:
-        q: asyncio.Queue = asyncio.Queue(maxsize=200)
-        self._listeners.add(q)
-        return q
-
-    def unlisten(self, q: asyncio.Queue) -> None:
-        self._listeners.discard(q)
-
     def snapshot(self) -> dict:
         now = time.monotonic()
         obs = self.obs if self.connected else None
         age = lambda t: round(now - t, 2) if t else None  # noqa: E731
         return {
+            "mode": self.mode,
             "connected": self.connected,
             "connect_error": self.connect_error,
             "room": self.s.room,
@@ -346,6 +367,5 @@ class RigLink:
             "action_age_s": age(self.action_seen),
             "action_sender": self.action_sender,
             "policy_latency_ms": self.policy_latency_ms,
-            "cameras": {name: {"width": c.width, "height": c.height, "age_s": age(c.seen), "fps": round(c.fps(now), 1),
-                               "seq": c.seq} for name, c in self.cameras.items() if name in self.tracks},
+            "cameras": self.camera_info(now),
         }

@@ -15,6 +15,11 @@ HTTP API (JSON; POST bodies are JSON):
     POST /api/home | /api/park
     POST /api/sequence/{arm,start,done,retry,teleop,stop}   arm takes {"index": n}; /api/sequence/load {"path"}
 
+arm-host mode (`--mode arm-host`, or auto when the room holds the Maker Arm kit's `arm-host`):
+    POST /api/release                   hold every powered arm (anyone may)
+    POST /api/arm/take | /api/arm/release_control
+    POST /api/arm/hold {"arm"?} | /api/arm/park {"arm"} | /api/arm/jog {"arm", "joint", "deg"}
+
 Safety: the harness never sends actions and never powers the arms up (park is park-only). `release` clears the
 control gate so nobody drives and the arms hold. None of this is an e-stop: keep a person on the leader arms /
 the robot terminal's `p` key.
@@ -34,7 +39,8 @@ from aiohttp import WSMsgType, web
 from dotenv import load_dotenv
 
 from . import protocol as P
-from .link import RigLink, RpcFailed, Settings
+from .armhost import ArmHostLink
+from .link import LinkBase, RigLink, RpcFailed, Settings
 from .sequence import Sequence, load_steps
 
 HERE = Path(__file__).resolve().parent
@@ -73,7 +79,7 @@ def build_settings(args: argparse.Namespace) -> Settings:
         os.environ["LIVEKIT_URL"] = args.url
     cfg = Path(args.portal_config) if args.portal_config else (
         Path(os.environ["PORTAL_CONFIG"]) if os.environ.get("PORTAL_CONFIG") else _first(_candidates("portal.yaml")))
-    if not cfg or not cfg.exists():
+    if (not cfg or not cfg.exists()) and getattr(args, "mode", "portal") == "portal":
         raise SystemExit("portal.yaml not found: pass --portal-config (the server's portal-makermods/portal.yaml), "
                          "or run `git submodule update --init` in TacoBot")
     token = os.environ.get("LIVEKIT_TOKEN") or None  # a token minted on the server laptop: no API secret needed
@@ -82,7 +88,7 @@ def build_settings(args: argparse.Namespace) -> Settings:
     if missing:
         raise SystemExit(f"missing {', '.join(missing)}: pass --env with the server laptop's LiveKit settings "
                          "(see .env.example)")
-    return Settings(portal_config=cfg, url=os.environ["LIVEKIT_URL"],
+    return Settings(portal_config=cfg or Path("portal.yaml"), url=os.environ["LIVEKIT_URL"],
                     room=args.room or os.environ.get("LIVEKIT_ROOM") or "(from token)",
                     api_key=os.environ.get("LIVEKIT_API_KEY", ""), api_secret=os.environ.get("LIVEKIT_API_SECRET", ""),
                     identity=args.identity, video_fps=args.video_fps, max_width=args.max_width, token=token)
@@ -135,16 +141,17 @@ async def auth_middleware(request: web.Request, handler):
     return await handler(request)
 
 
-def make_app(link: RigLink, tasks_path: Path | None = None, token: str | None = None) -> web.Application:
+def make_app(link: LinkBase, tasks_path: Path | None = None, token: str | None = None) -> web.Application:
     app = web.Application(middlewares=[auth_middleware])
     app["link"], app["token"], app["sequence"] = link, token, None
-    if tasks_path:
+    portal = isinstance(link, RigLink)
+    if tasks_path and portal:
         app["sequence"] = Sequence(link, load_steps(tasks_path), str(tasks_path))
     routes = web.RouteTableDef()
 
     @routes.get("/")
     async def index(_):
-        return web.FileResponse(HERE / "static" / "index.html")
+        return web.FileResponse(HERE / "static" / ("index.html" if portal else "armhost.html"))
 
     @routes.get("/api/state")
     async def state(_):
@@ -216,6 +223,74 @@ def make_app(link: RigLink, tasks_path: Path | None = None, token: str | None = 
             link.unlisten(events_q)
         return sock
 
+    if portal:
+        add_portal_routes(app, routes, link)
+    else:
+        add_armhost_routes(routes, link)
+    app.add_routes(routes)
+    app.router.add_static("/static", HERE / "static")
+
+    async def on_startup(_app):
+        link.start()
+
+    async def on_cleanup(_app):
+        seq = app["sequence"]
+        if seq is not None and seq.phase in ("running", "teleop") and link.connected:
+            try:
+                await link.pause()
+            except Exception:  # noqa: BLE001
+                pass
+        await link.stop()
+
+    app.on_startup.append(on_startup)
+    app.on_cleanup.append(on_cleanup)
+    return app
+
+
+def add_armhost_routes(routes: web.RouteTableDef, link: ArmHostLink) -> None:
+    @routes.post("/api/prompt")
+    @command
+    async def prompt(_request):
+        raise ValueError("no Dream-1 in this room: the arm laptop runs the Maker Arm kit (arm-host mode). "
+                         "Run upstream's robot + dream-1-tasks there to send prompts.")
+
+    @routes.post("/api/release")
+    @command
+    async def hold_all(_request):
+        return await link.hold()
+
+    @routes.post("/api/arm/take")
+    @command
+    async def take(_request):
+        return await link.take()
+
+    @routes.post("/api/arm/release_control")
+    @command
+    async def release_control(_request):
+        return await link.release_control()
+
+    @routes.post("/api/arm/hold")
+    @command
+    async def hold(request):
+        return await link.hold((await body(request)).get("arm") or None)
+
+    @routes.post("/api/arm/park")
+    @command
+    async def park(request):
+        return await link.park(str((await body(request)).get("arm", "")))
+
+    @routes.post("/api/arm/jog")
+    @command
+    async def jog(request):
+        data = await body(request)
+        try:
+            joint, deg = int(data.get("joint")), float(data.get("deg"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("jog needs numeric joint and deg") from exc
+        return await link.jog(str(data.get("arm", "")), joint, deg)
+
+
+def add_portal_routes(app: web.Application, routes: web.RouteTableDef, link: RigLink) -> None:
     @routes.post("/api/prompt")
     @command
     async def prompt(request):
@@ -261,31 +336,15 @@ def make_app(link: RigLink, tasks_path: Path | None = None, token: str | None = 
             return seq_or_fail().snapshot()
         routes.post(f"/api/sequence/{name}")(command(seq_action))
 
-    app.add_routes(routes)
-    app.router.add_static("/static", HERE / "static")
-
-    async def on_startup(_app):
-        link.start()
-
-    async def on_cleanup(_app):
-        seq = app["sequence"]
-        if seq is not None and seq.phase in ("running", "teleop") and link.connected:
-            try:
-                await link.pause()
-            except Exception:  # noqa: BLE001
-                pass
-        await link.stop()
-
-    app.on_startup.append(on_startup)
-    app.on_cleanup.append(on_cleanup)
-    return app
-
 
 def run(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--env", help="LiveKit settings of the server laptop (LIVEKIT_URL/API_KEY/API_SECRET/ROOM)")
     ap.add_argument("--url", help="override LIVEKIT_URL, e.g. ws://192.168.1.20:7880 for a LAN livekit-server")
     ap.add_argument("--check", action="store_true", help="list the server's rooms and who is in ours, then exit")
+    ap.add_argument("--mode", choices=["auto", "portal", "arm-host"], default="auto",
+                    help="portal: upstream robot + Dream-1; arm-host: the Maker Arm kit's web_app.py --livekit; "
+                         "auto (default): look at who is in the room")
     ap.add_argument("--portal-config", help="the server's portal.yaml (default: ../portal-makermods/portal.yaml)")
     ap.add_argument("--room", help="override LIVEKIT_ROOM")
     ap.add_argument("--identity", default=P.HARNESS_IDENTITY)
@@ -298,6 +357,9 @@ def run(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO").upper(),
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     os.environ.setdefault("RUST_LOG", "warn,livekit_portal::sync_buffer=error,libwebrtc=error")
+    requested = args.mode
+    if args.check or requested == "auto":
+        args.mode = "arm-host"  # don't insist on portal.yaml before we know which server runs
     settings = build_settings(args)
     if args.check:
         from .check import check_room
@@ -307,13 +369,50 @@ def run(argv: list[str] | None = None) -> None:
         good = asyncio.run(check_room(settings.url, settings.api_key, settings.api_secret, settings.room,
                                       list(P.CAMERAS)))
         raise SystemExit(0 if good else 1)
+    mode = requested
+    if mode == "auto":
+        mode = asyncio.run(detect_mode(settings))
+        log.info("mode: %s", mode)
+    if mode == "portal" and not settings.portal_config.exists():
+        args.mode = "portal"
+        settings = build_settings(args)  # exits with the portal.yaml hint
     token = os.environ.get("HARNESS_TOKEN") or None
     if args.host not in ("127.0.0.1", "localhost", "::1") and not token:
         log.warning("serving on %s without HARNESS_TOKEN: anyone on the network can steer the rig", args.host)
-    app = make_app(RigLink(settings), Path(args.tasks) if args.tasks else None, token)
-    log.info("harness on http://%s:%d (room %r, config %s)", args.host, args.port, settings.room,
-             settings.portal_config)
+    link = RigLink(settings) if mode == "portal" else ArmHostLink(settings)
+    app = make_app(link, Path(args.tasks) if args.tasks else None, token)
+    log.info("harness (%s mode) on http://%s:%d (room %r)", mode, args.host, args.port, settings.room)
     web.run_app(app, host=args.host, port=args.port, print=None)
+
+
+async def detect_mode(settings: Settings) -> str:
+    """Which server runs in the room: upstream's Portal robot, or the Maker Arm kit's arm-host. Waits for one."""
+    if settings.token:
+        log.info("LIVEKIT_TOKEN without API key/secret: cannot look into the room; assuming portal (use --mode)")
+        return "portal"
+    from livekit import api
+
+    from .armhost import ARM_HOST
+
+    said = None
+    while True:
+        lk = api.LiveKitAPI(settings.url, settings.api_key, settings.api_secret)
+        try:
+            people = (await lk.room.list_participants(api.ListParticipantsRequest(room=settings.room))).participants
+            ids = {p.identity for p in people}
+            if P.ROBOT_IDENTITY in ids:
+                return "portal"
+            if ARM_HOST in ids:
+                return "arm-host"
+            msg = f"neither {P.ROBOT_IDENTITY!r} nor {ARM_HOST!r} in room {settings.room!r} yet ({sorted(ids)})"
+        except Exception as exc:  # noqa: BLE001 — room not created yet, network, ...
+            msg = f"cannot list room {settings.room!r} yet ({exc})"
+        finally:
+            await lk.aclose()
+        if msg != said:
+            log.info("%s; waiting (or pass --mode portal|arm-host)", msg)
+            said = msg
+        await asyncio.sleep(3)
 
 
 if __name__ == "__main__":
