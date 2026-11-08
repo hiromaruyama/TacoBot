@@ -29,6 +29,7 @@ import time
 import webbrowser
 from types import SimpleNamespace
 from dataclasses import dataclass, field
+from typing import Any
 
 from aiohttp import web
 
@@ -64,6 +65,8 @@ class ArmSlot:
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     connecting: bool = False
     world: World = field(default_factory=World)  # virtual tortilla + plate for pick & place practice
+    busy: str | None = None             # a routine (the Quesadilla window) is driving this arm
+    busy_stop: Any = None               # threading.Event that stops that routine
     present: bool | None = None     # adapter seen on USB by the live watcher (None = unknown / sim)
     next_try: float = 0.0
 
@@ -303,6 +306,11 @@ class Hub:
             return f"unknown arm {msg.get('arm')!r}"
         if cmd == "reset_world":
             return slot.world.reset()
+        if slot.busy:  # the Quesadilla window is running this arm: only stopping it is allowed here
+            if cmd in ("hold", "park") and slot.busy_stop is not None:
+                slot.busy_stop.set()
+                return f"stopping the {slot.busy}: it finishes the current move, then parks"
+            return f"the {slot.busy} is driving the {slot.id} arm: STOP it there (or press Hold/Park)"
         if cmd == "connect":
             if origin != LOCAL:
                 return "connecting arms is done on the arm laptop"
@@ -517,6 +525,8 @@ def make_app(hub: Hub, use_livekit: bool) -> web.Application:
     app.router.add_get("/api/camera-token", camera_token)
     app.router.add_get("/api/invite", invite)
     app.router.add_static("/static", STATIC)
+    from quesadilla_web import mount as mount_quesadilla  # the /quesadilla window (stable/step1)
+    mount_quesadilla(app, hub)
     app.cleanup_ctx.append(lk_ctx)
     app.on_cleanup.append(on_cleanup)
     return app

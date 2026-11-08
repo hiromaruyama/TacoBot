@@ -21,6 +21,7 @@ COM port) and one candleLight adapter (no COM port, uses gs_usb). macOS and Linu
 |---|---|
 | `web_app.py` + `static/index.html` | Arm laptop: web page at http://127.0.0.1:8765 (camera, arm dropdown, every joint). With `--livekit`, shares the arms and camera with the team |
 | `remote.py` + `static/remote.html` | **Teammates, from anywhere:** live arm camera + controls over LiveKit (no arm hardware needed) |
+| `quesadilla_web.py` | The 🌮 Quesadilla window inside the web app (Astra plan + run on the arm) |
 | `sim_world.py` | Virtual tortilla + plate per arm and the grasp rule (forward kinematics from the SDK) |
 | `first_move.py` | Simplest test: nudge one joint a few degrees and back. Also lists ports |
 | `arm_server.py` | Runs next to an arm: joins a LiveKit room and accepts small jog commands |
@@ -194,6 +195,28 @@ The app starts even with **no arm connected**. It checks the USB adapters live (
 and its motors answer (retrying every 10 s). Pick a *not connected* arm and press **Connect** to try
 right away. Unplugging an adapter while its motors are off frees that arm; it reconnects when plugged
 back in. The other arm keeps working meanwhile.
+
+### 🌮 Quesadilla window (Astra plans, the arm runs it)
+
+The **🌮 Quesadilla** button in the main window's header opens http://127.0.0.1:8765/quesadilla in a
+new window: stable/step1's Quesadilla UI (`quesadilla_ui.py`) built into the web app, so it uses the
+arms the web app already holds (one program on the adapters; the main window keeps working).
+
+1. **Photo:** *This camera* (the browser's), *Upload photo*, or *Overhead cam* (`GLOBAL_CAM`, like
+   `quesadilla_ui.py`; needs `pip install opencv-python-headless` and shows only when available).
+2. **Plan with Astra:** sends the photo and the goal to NVIDIA NIM (`NIM_API_KEY`, `NIM_BASE_URL`,
+   `NIM_PLANNER_MODEL` in `.env`). The photo freezes with Astra's contact points; missing
+   ingredients can go to the groceries list (`groceries.json`). No key? **Sample plan** fills the
+   default tortilla tasks so the rest can be tested.
+3. **▶ Run on the arm** (pick the arm, speed 10-30°/s): asks for confirmation, powers the arm on
+   (same temperature/gripper checks as *Power on*), runs `tortilla_demo.py`'s bounded choreography
+   narrated with the plan's steps, then parks (verified).
+4. **STOP** here, or **Hold/Park** in the main window, stops it after the current move and parks.
+   While it runs, the main window refuses other moves on that arm and shows the routine's progress.
+   It won't start while a remote teammate has control. Works with `--sim` too.
+
+The standalone `./run.sh quesadilla_ui.py` (port 8766) still exists for the Linux station; don't
+run it at the same time as the web app on the same arm.
 
 ### Steps & the virtual tortilla (pick & place practice)
 

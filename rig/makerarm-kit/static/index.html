@@ -129,6 +129,7 @@
   <span id="simpill" class="pill sim" hidden>Simulator</span>
   <span id="adapters" class="muted" title="USB-CAN adapters plugged into this laptop (checked live every 3 s)"></span>
   <span class="spacer"></span>
+  <button id="btnQuesadilla" title="Astra plans from a photo, the arm runs it (opens a new window)">🌮 Quesadilla</button>
   <button id="btnConnect" hidden>Connect</button>
   <button id="btnPower" class="primary">Power on</button>
   <button id="btnClear" class="danger" hidden>Clear fault</button>
@@ -1038,6 +1039,10 @@ $("btnPower").onclick = () => {
   if (confirm(`Power on the ${armId} arm?\n\nArea clear, arm clamped to the table, and someone next to the power switch?\n\nThe motors switch on and the arm holds where it is.`)) send({ cmd: "power" });
 };
 $("btnHold").onclick = () => send({ cmd: "hold" });
+$("btnQuesadilla").onclick = () => {
+  const w = window.open("/quesadilla", "quesadilla", "width=1280,height=900");
+  if (w) w.focus(); else location.href = "/quesadilla";  // popup blocked: open it here
+};
 $("btnConnect").onclick = () => { $("btnConnect").disabled = true; showMsg(`Connecting the ${armId} arm…`); send({ cmd: "connect" }); };
 function renderAdapters(list) {
   if (info.sim) { $("adapters").textContent = ""; return; }
