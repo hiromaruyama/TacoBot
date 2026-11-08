@@ -52,8 +52,8 @@ async def _main(args: argparse.Namespace) -> int:
                 frame = director.frame
             finally:
                 await director.close()
-        reasoning, steps = await asyncio.to_thread(scene_planner.plan, frame, args.goal)
-        scene_planner.emit(reasoning, steps, frame)
+        reasoning, steps, present, missing = await asyncio.to_thread(scene_planner.plan, frame, args.goal)
+        scene_planner.emit(reasoning, steps, frame, present, missing)
         return 0
 
     director = scene_planner.Director()
