@@ -34,6 +34,20 @@ def _expose_libusb() -> None:
             os.add_dll_directory(folder)
 
 
+def release_usb(dev=None) -> None:
+    """Really let go of the adapter. python-can's gs_usb shutdown() stops the CAN channel but keeps the
+    pyusb handle open (and re-scans, opening more); with WinUSB only one handle may exist, so the next
+    open in this process fails with "[Errno 13] Access denied" until those objects are collected."""
+    import gc
+    if dev is not None:
+        try:
+            import usb.util
+            usb.util.dispose_resources(dev)
+        except Exception:  # noqa: BLE001
+            pass
+    gc.collect()
+
+
 def is_candle_port(port: str | None) -> bool:
     return bool(port) and port.lower().split(":")[0] == "candle"
 
@@ -80,10 +94,12 @@ class CandleBackend(CanBackend):
             self._rx.join(timeout=1.0)
             self._rx = None
         if self._bus:
+            dev = getattr(getattr(self._bus, "gs_usb", None), "gs_usb", None)  # the pyusb device
             try:
                 self._bus.shutdown()
             finally:
                 self._bus = None
+                release_usb(dev)
 
     def send(self, can_id: int, data: bytes, extended: bool = True) -> None:
         import can
