@@ -1,4 +1,4 @@
-.PHONY: setup check test lint plan cook status plan-astra cook-astra prompt
+.PHONY: setup check test lint plan cook status plan-astra cook-astra prompt ui
 
 setup:
 	git submodule update --init
@@ -28,6 +28,10 @@ cook:
 # Free-text console: type any instruction and Dream-1 runs it (manual, no Astra, no tasks.toml).
 prompt:
 	cd upstream && uv run python ../tacobot/dream_prompt.py
+
+# Web control panel: power, prompts, home/reset, and the 3 camera feeds in a browser.
+ui:
+	cd upstream && uv run python ../tacobot/dream_ui.py
 
 # Astra+Dream: Astra plans from the overhead camera (steps + contact markers), Dream-1 executes each
 # step, Astra verifies before the next. Run this AFTER checking the Dream baseline above.
