@@ -19,6 +19,7 @@
     }
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body { margin: 0; background: var(--bg); color: var(--text);
          font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
   header { display: flex; align-items: center; gap: 10px; padding: 14px 20px; flex-wrap: wrap;
@@ -58,8 +59,8 @@
   .msg { margin-top: 10px; padding: 8px 10px; border-radius: 8px; background: var(--track); color: var(--muted);
          min-height: 2.4em; font-size: 13px; }
   .msg.fault { background: var(--bad-soft); color: var(--bad); }
-  .joint { display: grid; grid-template-columns: 26px 1fr auto; gap: 10px; align-items: center;
-           padding: 9px 8px; border-radius: 8px; cursor: pointer; }
+  .joint { display: grid; grid-template-columns: 26px 1fr; gap: 10px; align-items: center;
+           padding: 9px 8px; border-radius: 8px; }
   .joint + .joint { border-top: 1px solid var(--line); }
   .joint.sel { background: var(--accent-soft); }
   .jn { font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -70,6 +71,43 @@
               transform: translateX(-2px); transition: left .1s linear; }
   .bar .tgt { position: absolute; top: -4px; width: 10px; height: 14px; border-radius: 4px;
               border: 2px solid var(--accent); transform: translateX(-5px); }
+  .view3d { position: absolute; inset: 0; background: #16181c; }
+  .label3d { position: absolute; transform: translate(-50%, 0); background: rgba(0,0,0,.6); color: #fff; font-size: 12px;
+             padding: 2px 8px; border-radius: 6px; white-space: nowrap; pointer-events: none; }
+  .label3d.sel { background: var(--accent); }
+  .label3d.hint3d { left: 8px; bottom: 8px; transform: none; color: #bbb; font-size: 11px; background: rgba(0,0,0,.4); }
+  .pipframe { position: absolute; border: 2px solid var(--accent); border-radius: 6px; pointer-events: none; }
+  .pipframe span { position: absolute; left: 6px; top: 4px; font-size: 11px; color: #fff; background: rgba(0,0,0,.5);
+                   padding: 0 6px; border-radius: 4px; }
+  .pipbtn { position: absolute; right: 8px; top: 8px; font-size: 12px; padding: 4px 9px; opacity: .9; }
+  .step { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto auto auto; gap: 8px; align-items: center;
+          padding: 6px 4px; border-radius: 8px; }
+  .step + .step { border-top: 1px solid var(--line); }
+  .step.cur { background: var(--accent-soft); }
+  .step .stname { width: 100%; border: 1px solid transparent; background: transparent; padding: 2px 4px; font-weight: 600;
+                  color: var(--text); font: inherit; }
+  .step .stname:focus { border-color: var(--line); background: var(--panel); }
+  .step .stq { font-size: 11px; padding-left: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .step button { padding: 4px 9px; }
+  #stList { max-height: 340px; overflow: auto; margin-top: 8px; }
+  .msg.ok { background: var(--ok-soft); color: var(--ok); }
+  .sticks { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+  .sticks.off .stick { opacity: .45; }
+  .stickbox { text-align: center; min-width: 0; }
+  .sticktitle { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+  .stick { position: relative; width: 100%; max-width: 150px; aspect-ratio: 1; margin: 0 auto; border-radius: 50%;
+           background: radial-gradient(circle, var(--panel) 0 28%, var(--track) 29%); border: 1px solid var(--line);
+           touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none; }
+  .stick:active { cursor: grabbing; }
+  .knob { position: absolute; left: 32%; top: 32%; width: 36%; height: 36%; border-radius: 50%; background: var(--accent);
+          box-shadow: 0 2px 6px rgba(0,0,0,.25); transition: transform .05s linear; pointer-events: none; }
+  .ax { position: absolute; font-size: 10px; color: var(--muted); font-weight: 600; pointer-events: none; }
+  .ax.up { top: 5px; left: 50%; transform: translateX(-50%); }
+  .ax.down { bottom: 5px; left: 50%; transform: translateX(-50%); }
+  .ax.left { left: 6px; top: 50%; transform: translateY(-50%); }
+  .ax.right { right: 6px; top: 50%; transform: translateY(-50%); }
+  .stickkeys { margin-top: 6px; }
+  .stickhelp { font-size: 11px; color: var(--muted); text-transform: capitalize; margin-top: 2px; }
   .jbtn { display: flex; gap: 6px; }
   .jbtn button { width: 40px; height: 36px; padding: 0; font-size: 18px; }
   .hint, .muted { color: var(--muted); font-size: 12px; }
@@ -106,26 +144,52 @@
 <main id="app" hidden>
   <section class="card">
     <h2>Camera</h2>
+    <div class="row" style="margin-top:0;margin-bottom:8px">
+      <div class="seg" id="viewSeg"><button data-v="video">Video</button><button data-v="3d">3D view</button></div>
+      <span class="muted">3D view is drawn from the arms' live joint data</span>
+    </div>
+    <div id="view3dBox" class="cam" hidden><div id="view3d" class="view3d"></div></div>
     <div id="videos"><div class="cam cam-empty" id="noVideo">Waiting for the arm laptop to share its camera…</div></div>
     <div class="row muted" id="people">—</div>
   </section>
 
   <section class="card">
     <h2 id="moveTitle">Movement</h2>
-    <div class="row" style="margin-top:0">
-      <span>Step:</span>
-      <div class="seg" id="steps"></div>
-      <span class="spacer"></span>
-      <button id="gripOpen">Open gripper</button>
-      <button id="gripClose">Close gripper</button>
-    </div>
+    <div id="teleop"></div>
     <div id="joints" style="margin-top:10px"></div>
     <div id="msg" class="msg">Connecting…</div>
     <div class="hint">
-      Keyboard: <kbd>Q</kbd>/<kbd>E</kbd> switch arm · <kbd>1</kbd>–<kbd>7</kbd> pick joint ·
-      <kbd>←</kbd>/<kbd>→</kbd> or <kbd>A</kbd>/<kbd>D</kbd> move · <kbd>Space</kbd> hold.
-      Keep a button pressed to keep moving. Moving needs control; Hold and Park work for everyone.
+      Keyboard (hold keys, several at once): <kbd>A</kbd><kbd>D</kbd> base · <kbd>W</kbd><kbd>S</kbd> shoulder ·
+      <kbd>I</kbd><kbd>K</kbd> elbow · <kbd>J</kbd><kbd>L</kbd> wrist yaw · <kbd>↑</kbd><kbd>↓</kbd> wrist flex ·
+      <kbd>←</kbd><kbd>→</kbd> wrist roll · <kbd>O</kbd>/<kbd>C</kbd> open/close gripper · <kbd>Z</kbd>/<kbd>X</kbd> speed −/+ ·
+      hold <kbd>Shift</kbd> for precise · <kbd>Space</kbd> stop · <kbd>Q</kbd>/<kbd>E</kbd> switch arm.
+      Drag a joystick (touch works too); let go and the arm stops. Moving needs control; Hold and Park work for everyone.
     </div>
+  </section>
+
+  <section class="card" id="stepsCard">
+    <h2>Steps · pick &amp; place practice</h2>
+    <div id="worldMsg" class="msg" style="margin-top:0">Virtual tortilla: shown once this arm is connected.</div>
+    <div class="row">
+      <button id="stAdd">+ Add current pose</button>
+      <button id="stPlay" class="primary">▶ Play</button>
+      <button id="stStop">■ Stop</button>
+      <label><input type="checkbox" id="stLoop"> Loop</label>
+      <span class="spacer"></span>
+      <button id="stReset" title="Put the virtual tortilla back on the table">Reset tortilla</button>
+    </div>
+    <div id="stList"></div>
+    <div class="row">
+      <button id="stDemo">Load tortilla demo</button>
+      <button id="stSave">Save…</button>
+      <button id="stLoad">Load…</button>
+      <input type="file" id="stFile" accept=".json,application/json" hidden>
+      <span class="spacer"></span>
+      <button id="stClear" class="danger">Clear</button>
+    </div>
+    <div id="stMsg" class="msg"></div>
+    <div class="hint">Playback uses the Speed slider. Joysticks, keys or <kbd>Space</kbd> stop it. Grasp the tortilla by
+      closing the gripper with the grasp point (the dot between the jaws) on its outer edge; open to let go.</div>
   </section>
 </main>
 
@@ -146,9 +210,8 @@ function loadSdk() {  // loaded on demand: works both from remote.py and from a 
 // Invite links carry everything after '#': u = LiveKit URL, t = token, n = name, h = host identity.
 // The part after '#' never leaves the browser.
 const invite = Object.fromEntries(new URLSearchParams(location.hash.slice(1)));
-const STEPS = [1, 2, 5, 10];
 let room = null, me = null, host = "arm-host";
-let latest = null, latestAt = 0, armId = null, step = 2, selected = 1, built = false;
+let latest = null, latestAt = 0, armId = null, built = false;
 const enc = new TextEncoder(), dec = new TextDecoder();
 const st = () => latest && latest.arms && latest.arms[armId];
 const iHaveControl = () => latest && latest.controller === me;
@@ -201,6 +264,7 @@ async function join() {
     await room.connect(t.url, t.token);
     setConn("Connected as " + t.name, "on");
     $("joinCard").hidden = true; $("app").hidden = false;
+    setView(view, false);
     showMsg("Connected. Waiting for the arm laptop…");
     renderPeople();
     setInterval(staleCheck, 1000);
@@ -217,8 +281,23 @@ async function join() {
 function setConn(text, cls) { $("conn").textContent = text; $("conn").className = "pill " + cls; }
 
 // ---------- video ----------
+let view = "3d", viewChosen = false;
+function setView(v, byUser = true) {
+  view = v; if (byUser) viewChosen = true;
+  $("viewSeg").querySelectorAll("button").forEach(b => b.classList.toggle("sel", b.dataset.v === v));
+  $("view3dBox").hidden = v !== "3d";
+  $("videos").hidden = v === "3d";
+  if (v === "3d") Arm3D.mount($("view3d")).then(feed3d).catch(() => {});
+}
+$("viewSeg").querySelectorAll("button").forEach(b => b.onclick = () => setView(b.dataset.v));
+function feed3d() {
+  if (!latest || !latest.info) return;
+  Arm3D.setArms(latest.info.arms.map(a => a.id));
+  for (const [id, s] of Object.entries(latest.arms || {})) Arm3D.update(id, s);
+}
 function onTrack(track, pub, participant) {
   if (track.kind !== "video") return;
+  if (!viewChosen) setView("video", false);  // a real camera arrived: show it (3D stays one click away)
   $("noVideo")?.remove();
   const box = document.createElement("div"); box.className = "cam";
   const el = track.attach(); el.muted = true; el.playsInline = true;
@@ -247,6 +326,8 @@ function onData(payload, participant, kind, topic) {
   latest = data; latestAt = Date.now();
   if (!built) build();
   render();
+  feed3d();
+  Steps.renderWorld(st());
 }
 function staleCheck() {
   if (!latest || Date.now() - latestAt > 3000) {
@@ -264,15 +345,6 @@ async function send(body) {
       { reliable: true, topic: "arm/cmd", destinationIdentities: [host] });
   } catch (e) { showMsg("Send failed: " + e.message, true); }
 }
-let lastJog = 0;
-function jog(joint, dir) {
-  if (!iHaveControl()) { showMsg(latest && latest.controller ? `${latest.controller} has control.` : "Press Take control first."); return; }
-  if (!st() || !st().on) { showMsg(`The ${armId} arm is off. It's powered on from the arm laptop.`); return; }
-  const now = performance.now();
-  if (now - lastJog < 250) return;
-  lastJog = now;
-  send({ cmd: "jog", joint, deg: dir * step });
-}
 $("btnTake").onclick = () => send({ cmd: iHaveControl() ? "release" : "take" });
 $("btnHold").onclick = () => send({ cmd: "hold" });
 $("btnPark").onclick = () => {
@@ -286,61 +358,696 @@ function build() {
   const ok = info.arms.filter(a => a.ok);
   let saved = null; try { saved = localStorage.getItem("remoteArm"); } catch (e) {}
   armId = (ok.find(a => a.id === saved) || ok[0] || info.arms[0]).id;
-  $("armSelect").innerHTML = info.arms.map(a => `<option value="${a.id}" ${a.ok ? "" : "disabled"}>${a.id}</option>`).join("");
+  $("armSelect").innerHTML = info.arms.map(a => `<option value="${a.id}">${a.id}</option>`).join("");
   $("armSelect").value = armId; $("armSelect").disabled = false;
   $("armSelect").onchange = (e) => chooseArm(e.target.value);
-  $("steps").innerHTML = STEPS.filter(s => s <= info.max_step).map(s => `<button data-s="${s}">${s}°</button>`).join("");
-  $("steps").querySelectorAll("button").forEach(b => b.onclick = () => { step = +b.dataset.s; markStep(); });
-  markStep();
   $("joints").innerHTML = info.joints.map(j => `
-    <div class="joint ${j.n === selected ? "sel" : ""}" data-n="${j.n}">
+    <div class="joint" data-n="${j.n}">
       <div class="jn">J${j.n}</div>
       <div>
         <div class="jname"><span>${j.name}</span><span id="val${j.n}">—</span></div>
         <div class="bar"><div class="tgt" id="tgt${j.n}" hidden></div><div class="pos" id="pos${j.n}"></div></div>
       </div>
-      <div class="jbtn">
-        <button data-j="${j.n}" data-d="-1" aria-label="J${j.n} minus">−</button>
-        <button data-j="${j.n}" data-d="1" aria-label="J${j.n} plus">+</button>
-      </div>
     </div>`).join("");
-  $("joints").querySelectorAll(".joint").forEach(r => r.addEventListener("click", () => select(+r.dataset.n)));
-  $("joints").querySelectorAll("button[data-j]").forEach(b => holdToRepeat(b, () => jog(+b.dataset.j, +b.dataset.d)));
-  holdToRepeat($("gripOpen"), () => jog(7, -1));
-  holdToRepeat($("gripClose"), () => jog(7, 1));
+  Teleop.init($("teleop"), info.joints, info.speed, {
+    canMove: () => !!(iHaveControl() && st() && st().on),
+    send,
+    blocked: () => showMsg(!iHaveControl()
+      ? (latest && latest.controller ? `${latest.controller} has control.` : "Press Take control first.")
+      : `The ${armId} arm is off. It's powered on from the arm laptop.`),
+  });
+  Steps.init({
+    state: st, send,
+    canMove: () => !!(iHaveControl() && st() && st().on),
+    blockedText: () => !iHaveControl() ? "press Take control first" : `the ${armId} arm is off (powered on at the arm laptop)`,
+  }, info.demo);
   chooseArm(armId);
   built = true;
 }
-function markStep() { $("steps").querySelectorAll("button").forEach(b => b.classList.toggle("sel", +b.dataset.s === step)); }
 function chooseArm(id) {
-  armId = id; $("armSelect").value = id;
+  if (built && armId && id !== armId) { Teleop.stop(); Steps.stop("Stopped: switched arm."); }  // old arm holds
+  armId = id;
+  Arm3D.select(id); $("armSelect").value = id;
   $("moveTitle").textContent = `Movement · ${id} arm`;
   try { localStorage.setItem("remoteArm", id); } catch (e) {}
   if (latest) render();
 }
 function cycleArm(dir) {
-  const ok = latest.info.arms.filter(a => a.ok);
-  const i = ok.findIndex(a => a.id === armId);
-  chooseArm(ok[(i + dir + ok.length) % ok.length].id);
+  const all = latest.info.arms;
+  const i = all.findIndex(a => a.id === armId);
+  chooseArm(all[(i + dir + all.length) % all.length].id);
 }
-function select(n) {
-  selected = n;
-  document.querySelectorAll(".joint").forEach(r => r.classList.toggle("sel", +r.dataset.n === n));
-}
-function holdToRepeat(el, fn) {
-  let timer = null;
-  const stop = () => { clearTimeout(timer); clearInterval(timer); timer = null; };
-  el.addEventListener("pointerdown", (e) => {
-    e.preventDefault(); e.stopPropagation(); fn();
-    timer = setTimeout(() => { timer = setInterval(fn, 300); }, 400);
-  });
-  ["pointerup", "pointerleave", "pointercancel"].forEach(ev => el.addEventListener(ev, stop));
-  el.addEventListener("click", (e) => e.stopPropagation());
-}
+// ---------- 3D view of the arms (same block in index.html and remote.html) ----------
+// The SDK's own URDF (CAD of the Maker Arm v1, pinned to the SDK commit in requirements.txt) driven by
+// the live joint angles. Motor degrees map 1:1 onto the URDF joints exactly like the SDK's gravity
+// model (maker_arm/gravity.py): root rotation (90°, 0, 180°) and the wrist-yaw axis flipped.
+// The gripper's angle -> jaw gap is a linear preview (0° closed, -96° fully open), not calibrated.
+const Arm3D = (() => {
+  const LIB = {
+    three: "https://esm.sh/three@0.160.0",
+    orbit: "https://esm.sh/three@0.160.0/examples/jsm/controls/OrbitControls.js",
+    urdf: "https://esm.sh/urdf-loader@0.12.3?deps=three@0.160.0",
+  };
+  const URDF_URL = "https://cdn.jsdelivr.net/gh/makermods-robotics/maker-arm-sdk@" +
+    "0245316c05cb3e8d900f35e70c08e2e18e36731e/urdf/maker_arm/robot.urdf";
+  const JOINTS = ["link_002_joint", "link_003_joint", "link_004_joint", "link_005_joint", "link_006_joint", "link_007_joint"];
+  const SIGN = [1, 1, 1, 1, -1, 1];  // J5 wrist yaw: URDF axis is opposite to the motor's
+  const GRIP_TRAVEL = 0.0524125, GRIP_OPEN_DEG = -96;
+  const SPACING = 0.6;               // metres between the arms in the view
+  const COLORS = { on: 0xc9d3e3, off: 0x8d8c88, fault: 0xd9645f, none: 0x5b5a57 };
+  let T = null, U = null, renderer, scene, camera, controls, host, labels, ready = null, selected = null;
+  let pipCam = null, pipOn = true, pipFrame = null;
+  // gripper camera: mounted on the wrist (link_007 frame), looking down the jaws at the grasp point
+  let PIP_EYE = [0.10, 0, -0.06], PIP_LOOK = [0, 0, -0.2];
+  const arms = {};                   // id -> {group, robot, cur, goal, status, label, mats}
+  let order = [];
+
+  function mount(el) {
+    host = el;
+    if (!ready) ready = init().catch(e => {
+      host.innerHTML = `<div class="cam-empty">3D view unavailable: ${e.message}</div>`;
+      throw e;
+    });
+    return ready;
+  }
+
+  async function init() {
+    const [THREE, orbit, urdf] = await Promise.all([import(LIB.three), import(LIB.orbit), import(LIB.urdf)]);
+    T = THREE; U = urdf.default;
+    renderer = new T.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+    renderer.domElement.style.cssText = "width:100%;height:100%;display:block;touch-action:none";
+    host.innerHTML = "";
+    host.appendChild(renderer.domElement);
+    labels = document.createElement("div");
+    labels.style.cssText = "position:absolute;inset:0;pointer-events:none";
+    host.appendChild(labels);
+    const hint = document.createElement("div");
+    hint.className = "label3d hint3d";
+    hint.textContent = "3D from live joint data · drag to orbit · scroll to zoom";
+    host.appendChild(hint);
+    try { pipOn = localStorage.getItem("pip") !== "0"; } catch (e) {}
+    pipFrame = document.createElement("div");
+    pipFrame.className = "pipframe";
+    pipFrame.innerHTML = "<span>gripper cam</span>";
+    host.appendChild(pipFrame);
+    const pipBtn = document.createElement("button");
+    pipBtn.className = "pipbtn";
+    const pipText = () => { pipBtn.textContent = pipOn ? "Hide gripper cam" : "Gripper cam"; pipFrame.hidden = !pipOn; };
+    pipBtn.onclick = () => { pipOn = !pipOn; try { localStorage.setItem("pip", pipOn ? "1" : "0"); } catch (e) {} pipText(); };
+    host.appendChild(pipBtn);
+    pipText();
+
+    scene = new T.Scene();
+    scene.background = new T.Color(0x16181c);
+    camera = new T.PerspectiveCamera(40, 16 / 9, 0.01, 20);
+    camera.position.set(0.0, 0.75, 1.45);
+    pipCam = new T.PerspectiveCamera(70, 4 / 3, 0.005, 5);
+    controls = new orbit.OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 0.18, 0);
+    controls.enableDamping = true;
+    controls.update();
+    scene.add(new T.HemisphereLight(0xffffff, 0x30343a, 1.6));
+    const sun = new T.DirectionalLight(0xffffff, 1.6);
+    sun.position.set(1, 2, 1.5);
+    scene.add(sun);
+    const grid = new T.GridHelper(2.4, 24, 0x4a4f58, 0x2a2e35);
+    scene.add(grid);
+
+    new ResizeObserver(resize).observe(host);
+    resize();
+    let last = performance.now();
+    renderer.setAnimationLoop((now) => {
+      const dt = Math.min(0.1, (now - last) / 1000); last = now;
+      const a = 1 - Math.exp(-dt * 12);   // smooth the 4-5 Hz state updates
+      for (const id of order) step(arms[id], a);
+      controls.update();
+      renderer.render(scene, camera);
+      if (pipOn && arms[selected] && arms[selected].robot) renderPip(arms[selected]);
+      placeLabels();
+    });
+  }
+
+  function resize() {
+    if (!renderer) return;
+    const w = Math.max(1, host.clientWidth), h = Math.max(1, host.clientHeight);
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+
+  function loadRobot() {
+    return new Promise((ok, fail) => {
+      const manager = new T.LoadingManager();
+      const loader = new U(manager);
+      let robot = null;
+      manager.onLoad = () => robot && ok(robot);
+      manager.onError = (url) => fail(new Error("could not load " + url.split("/").pop()));
+      loader.load(URDF_URL, (r) => { robot = r; }, null, fail);
+    });
+  }
+
+  // (re)build the scene for these arm ids, side by side in that order
+  async function setArms(ids) {
+    await ready;
+    const key = ids.join(",");
+    if (key === order.join(",")) return;
+    order = ids.slice();
+    for (const id of ids) {
+      if (arms[id]) continue;
+      const group = new T.Group();
+      group.rotation.x = -Math.PI / 2;  // URDF is z-up, three.js is y-up
+      const label = document.createElement("div");
+      label.className = "label3d";
+      label.textContent = id;
+      labels.appendChild(label);
+      arms[id] = { id, group, robot: null, cur: null, goal: null, grip: 0, gripGoal: 0, status: "none", label, mats: [],
+                   world: makeWorld(group), marker: null };
+      scene.add(group);
+      loadRobot().then((robot) => {
+        robot.rotation.set(Math.PI / 2, 0, Math.PI, "ZYX");  // the SDK's ROOT_RPY
+        for (const j of Object.values(robot.joints)) j.ignoreLimits = true;  // the motors' range, not the CAD's
+        robot.traverse((o) => {
+          if (o.isMesh) { o.material = new T.MeshStandardMaterial({ color: COLORS.off, metalness: 0.15, roughness: 0.55 });
+                          arms[id].mats.push(o.material); }
+        });
+        const gc = robot.links && robot.links.grasp_center;  // the URDF's grasp point, between the jaws
+        if (gc) {
+          arms[id].marker = new T.Mesh(new T.SphereGeometry(0.007, 16, 12), new T.MeshBasicMaterial({ color: 0xffffff }));
+          gc.add(arms[id].marker);
+        }
+        arms[id].robot = robot;
+        group.add(robot);
+        paint(arms[id]);
+      }).catch((e) => { label.textContent = `${id}: ${e.message}`; });
+    }
+    for (const [i, id] of order.entries()) arms[id].group.position.x = (i - (order.length - 1) / 2) * SPACING;
+    for (const id of Object.keys(arms)) { arms[id].group.visible = order.includes(id); arms[id].label.hidden = !order.includes(id); }
+  }
+
+  function statusOf(s) {
+    if (!s || s.connected === false || s.offline) return "none";
+    return s.state === "FAULT" ? "fault" : s.on ? "on" : "off";
+  }
+  function paint(arm) {
+    const c = COLORS[arm.status] ?? COLORS.off;
+    for (const m of arm.mats) { m.color.setHex(c); m.emissive.setHex(arm === arms[selected] ? 0x18305a : 0x000000); }
+    const word = { on: "on", off: "off", fault: "FAULT", none: "not connected" }[arm.status];
+    arm.label.textContent = `${arm.id} · ${word}`;
+    arm.label.classList.toggle("sel", arm === arms[selected]);
+  }
+
+  // feed one arm's latest state (joints_deg in motor degrees)
+  function update(id, s) {
+    const arm = arms[id];
+    if (!arm) return;
+    const status = statusOf(s);
+    if (status !== arm.status) { arm.status = status; paint(arm); }
+    arm.world.server = (s && s.world) || null;
+    const q = s && s.joints_deg;
+    if (!q || !q.slice(0, 6).every(Number.isFinite)) return;
+    arm.goal = q.slice(0, 6).map((d, i) => SIGN[i] * d * Math.PI / 180);
+    if (Number.isFinite(q[6])) arm.gripGoal = Math.min(1, Math.max(0, q[6] / GRIP_OPEN_DEG)) * GRIP_TRAVEL;
+    if (!arm.cur) { arm.cur = arm.goal.slice(); arm.grip = arm.gripGoal; }
+  }
+  function step(arm, a) {
+    if (!arm || !arm.robot || !arm.goal) return;
+    for (let i = 0; i < 6; i++) {
+      arm.cur[i] += (arm.goal[i] - arm.cur[i]) * a;
+      arm.robot.setJointValue(JOINTS[i], arm.cur[i]);
+    }
+    arm.grip += (arm.gripGoal - arm.grip) * a;
+    arm.robot.setJointValue("gripper_left_joint", arm.grip);
+    arm.robot.setJointValue("gripper_right_joint", arm.grip);
+    applyWorld(arm);
+  }
+
+  // ---- soft tortilla: a polar mesh re-shaped every frame (lying with its fold, or hanging from the jaws) ----
+  const NR = 14, NS = 56;                      // rings x segments
+  function makeWorld(group) {
+    const n = 1 + NR * NS, pos = new Float32Array(n * 3), col = new Float32Array(n * 3), uv = [];
+    uv.push([0, 0]);
+    for (let r = 1; r <= NR; r++) for (let s = 0; s < NS; s++) {
+      const a = s / NS * Math.PI * 2, rho = r / NR;
+      uv.push([rho * Math.cos(a), rho * Math.sin(a)]);
+    }
+    const idx = [];
+    for (let s = 0; s < NS; s++) idx.push(0, 1 + s, 1 + (s + 1) % NS);
+    for (let r = 1; r < NR; r++) for (let s = 0; s < NS; s++) {
+      const a = 1 + (r - 1) * NS + s, b = 1 + (r - 1) * NS + (s + 1) % NS, c = a + NS, d = b + NS;
+      idx.push(a, c, b, b, c, d);
+    }
+    // toasted spots: a cheap hash noise on the base colour
+    uv.forEach(([x, y], i) => {
+      const h = Math.abs(Math.sin(x * 91.7 + y * 47.3) * 43758.5) % 1, k = h > 0.93 ? 0.72 : h > 0.85 ? 0.86 : 1;
+      col.set([0.91 * k, 0.77 * k, 0.5 * k], i * 3);
+    });
+    const geo = new T.BufferGeometry();
+    geo.setAttribute("position", new T.BufferAttribute(pos, 3));
+    geo.setAttribute("color", new T.BufferAttribute(col, 3));
+    geo.setIndex(idx);
+    const tm = new T.Mesh(geo, new T.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, side: T.DoubleSide }));
+    tm.frustumCulled = false;
+    const plate = new T.Group();
+    const pm = new T.Mesh(new T.CylinderGeometry(1, 0.8, 1, 48), new T.MeshStandardMaterial({ color: 0xf0efe9, roughness: 0.35 }));
+    pm.rotation.x = Math.PI / 2;  // cylinder axis y -> z (the world here is z-up)
+    plate.add(pm);
+    tm.visible = plate.visible = false;
+    group.add(tm, plate);
+    return { tm, uv, plate, pm, server: null, dirX: 1, dirY: 0 };
+  }
+  function linkInGroup(arm, link) {
+    arm.group.updateMatrixWorld(true);
+    return new T.Matrix4().copy(arm.group.matrixWorld).invert().multiply(link.matrixWorld);
+  }
+  // hanging sheet: arc of bend radius RB from the jaws, then straight down-ish
+  const RB = 0.045, TH = Math.PI / 2 * 0.92;
+  function hang(s) {
+    const s1 = RB * TH;
+    if (s <= s1) return [RB * Math.sin(s / RB), -RB * (1 - Math.cos(s / RB))];
+    return [RB * Math.sin(TH) + (s - s1) * Math.cos(TH), -RB * (1 - Math.cos(TH)) - (s - s1) * Math.sin(TH)];
+  }
+  function applyWorld(arm) {
+    const w = arm.world, sv = w.server;
+    w.tm.visible = w.plate.visible = !!sv;
+    if (!sv) return;
+    const t = sv.tortilla, p = sv.plate, R = t.r;
+    w.pm.scale.set(p.r, p.h, p.r);
+    w.plate.position.set(p.pos[0], p.pos[1], p.h / 2);
+    const surf = (x, y) => (Math.hypot(x - p.pos[0], y - p.pos[1]) <= p.r ? p.h : 0) + 0.0015;
+    const P = w.tm.geometry.attributes.position, a = P.array;
+    const gcLink = arm.robot.links && arm.robot.links.grasp_center;
+    if (t.held && gcLink && sv.grasp) {
+      // hang from the (smoothed) jaws; the body lies on the side away from the grip
+      const G = new T.Vector3().setFromMatrixPosition(linkInGroup(arm, gcLink));
+      const dx = t.pos[0] - sv.grasp[0], dy = t.pos[1] - sv.grasp[1], dl = Math.hypot(dx, dy);
+      if (dl > 0.005) { w.dirX += (dx / dl - w.dirX) * 0.3; w.dirY += (dy / dl - w.dirY) * 0.3; }
+      const nl = Math.hypot(w.dirX, w.dirY) || 1, ux = w.dirX / nl, uy = w.dirY / nl;
+      const DG = R * 0.55;  // the fold sits this far from the centre
+      w.uv.forEach(([lx, ly], i) => {
+        const along = lx * R + DG, side = ly * R;
+        const [hh, vv] = hang(Math.abs(along));
+        const sg = along < 0 ? -1 : 1;
+        let x = G.x + ux * hh * sg - uy * side, y = G.y + uy * hh * sg + ux * side;
+        let z = G.z + vv - 3.5 * side * side - 0.004;
+        z = Math.max(z, surf(x, y));  // where it reaches the table it lies on it
+        a[i * 3] = x; a[i * 3 + 1] = y; a[i * 3 + 2] = z;
+      });
+    } else {
+      // lying flat, with the pushed edge bunched up into a fold
+      const r = t.rot, cx = t.pos[0], cy = t.pos[1], c = r[0], s = r[3];
+      const fold = t.fold || 0, fa = t.fold_at, fh = (t.fold_h || 0.025) * fold;
+      w.uv.forEach(([lx, ly], i) => {
+        const x0 = lx * R, y0 = ly * R;
+        let x = cx + c * x0 - s * y0, y = cy + s * x0 + c * y0, z = surf(cx, cy);
+        if (fh > 0 && fa) {
+          const d = Math.hypot(x - fa[0], y - fa[1]);
+          z += fh * Math.exp(-((d / 0.022) ** 2)) + fh * 0.25 * Math.exp(-((d / 0.04) ** 2)) * Math.sin(d * 260);
+        }
+        a[i * 3] = x; a[i * 3 + 1] = y; a[i * 3 + 2] = z;
+      });
+    }
+    P.needsUpdate = true;
+    w.tm.geometry.computeVertexNormals();
+    if (arm.marker) arm.marker.material.color.setHex(t.held ? 0x3ddc84 : (sv.gap_mm != null && sv.gap_mm < 12) ? 0xffb020
+      : t.pressing ? 0x4aa3ff : 0xffffff);
+  }
+
+  function renderPip(arm) {
+    const link = arm.robot.links && arm.robot.links.link_007;
+    if (!link) return;
+    link.updateMatrixWorld(true);
+    const eye = link.localToWorld(new T.Vector3(...PIP_EYE)), at = link.localToWorld(new T.Vector3(...PIP_LOOK));
+    pipCam.up.copy(new T.Vector3(1, 0, 0).transformDirection(link.matrixWorld));
+    pipCam.position.copy(eye);
+    pipCam.lookAt(at);
+    const w = host.clientWidth, h = host.clientHeight, m = 8;
+    const pw = Math.round(Math.max(120, w * 0.34)), ph = Math.round(pw * 0.75);
+    pipCam.aspect = pw / ph;
+    pipCam.updateProjectionMatrix();
+    renderer.setScissorTest(true);
+    renderer.setViewport(w - pw - m, m, pw, ph);  // GL origin is bottom-left
+    renderer.setScissor(w - pw - m, m, pw, ph);
+    renderer.render(scene, pipCam);
+    renderer.setScissorTest(false);
+    renderer.setViewport(0, 0, w, h);
+    Object.assign(pipFrame.style, { width: pw + "px", height: ph + "px", right: m + "px", bottom: m + "px" });
+  }
+  function select(id) {
+    selected = id;
+    for (const arm of Object.values(arms)) paint(arm);
+  }
+  function placeLabels() {
+    const v = new T.Vector3();
+    for (const id of order) {
+      const arm = arms[id];
+      arm.group.getWorldPosition(v);
+      v.y += 0.02; v.z += 0.22;
+      v.project(camera);
+      arm.label.style.left = ((v.x + 1) / 2 * host.clientWidth) + "px";
+      arm.label.style.top = ((1 - v.y) / 2 * host.clientHeight) + "px";
+    }
+  }
+  // a live video track of this view (to share as the team "camera")
+  function stream(fps = 30) { return renderer.domElement.captureStream(fps); }
+
+  // tweak the gripper camera from the console: Arm3D.pip([x, y, z], [x, y, z]) in the wrist frame, metres
+  function pip(eye, look) { if (eye) PIP_EYE = eye; if (look) PIP_LOOK = look; return { eye: PIP_EYE, look: PIP_LOOK }; }
+  return { mount, setArms, update, select, stream, pip, get ready() { return ready; } };
+})();
+
+// ---------- steps: record poses and play them back (same block in index.html and remote.html) ----------
+// Playback streams absolute setpoints ({cmd:"goto"}) 10x/s along a straight line in joint space, all
+// joints arriving together, at the speed slider's speed. The server clamps every setpoint into the safe
+// range and to 8° from the real position, like the joysticks. Touching a joystick/key, Space, switching
+// arm or losing control stops it and the arm holds.
+const Steps = (() => {
+  const TICK_MS = 100;
+  let steps = [], hooks = null, playing = false, cur = -1, demo = [];
+  const el = (id) => document.getElementById(id);
+  const valid = (s) => s && Array.isArray(s.q) && s.q.length === 7 && s.q.every(Number.isFinite);
+  const esc = (t) => String(t).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const fmt = (q) => q.map((v, i) => (i === 6 ? "grip " : `J${i + 1} `) + Math.round(v)).join(" · ");
+  function save() { try { localStorage.setItem("steps", JSON.stringify(steps)); } catch (e) {} }
+  function load() {
+    try { const s = JSON.parse(localStorage.getItem("steps") || "[]"); if (Array.isArray(s)) steps = s.filter(valid); } catch (e) {}
+  }
+  function msg(text, bad = false) { const m = el("stMsg"); m.textContent = text; m.classList.toggle("fault", bad); }
+
+  function render() {
+    el("stList").innerHTML = steps.length ? steps.map((s, i) => `
+      <div class="step ${i === cur ? "cur" : ""}" data-i="${i}">
+        <span class="jn">${i + 1}</span>
+        <div style="min-width:0"><input class="stname" value="${esc(s.name || "Step " + (i + 1))}" maxlength="40">
+          <div class="muted stq">${fmt(s.q)}</div></div>
+        <button data-a="go" title="Move to this step only">Go</button>
+        <button data-a="up" title="Move up" ${i ? "" : "disabled"}>↑</button>
+        <button data-a="del" title="Delete">✕</button>
+      </div>`).join("")
+      : `<div class="muted" style="padding:8px 4px">No steps yet: move the arm and press <b>Add current pose</b>, or load the tortilla demo.</div>`;
+    el("stList").querySelectorAll(".step").forEach(row => {
+      const i = +row.dataset.i;
+      row.querySelector(".stname").onchange = (e) => { steps[i].name = e.target.value; save(); };
+      row.querySelectorAll("button").forEach(b => b.onclick = () => {
+        if (b.dataset.a === "go") play(i, true);
+        else if (playing) msg("Stop the sequence first.");
+        else if (b.dataset.a === "up") { [steps[i - 1], steps[i]] = [steps[i], steps[i - 1]]; save(); render(); }
+        else { steps.splice(i, 1); save(); render(); }
+      });
+    });
+    el("stPlay").disabled = !steps.length || playing;
+    el("stStop").disabled = !playing;
+  }
+
+  function add() {
+    const s = hooks.state(), q = s && s.joints_deg;
+    if (!q || q.length < 7 || !q.slice(0, 7).every(Number.isFinite)) { msg("No joint reading for this arm yet.", true); return; }
+    steps.push({ name: "Step " + (steps.length + 1), q: q.slice(0, 7).map(v => Math.round(v * 10) / 10) });
+    save(); render();
+    msg(`Added step ${steps.length}.`);
+  }
+
+  async function play(from = 0, single = false) {
+    if (playing) return;
+    if (!hooks.canMove()) { msg(hooks.blockedText(), true); return; }
+    playing = true; render();
+    let i = from;
+    try {
+      while (playing) {
+        cur = i; render();
+        msg(`Step ${i + 1}/${steps.length}: ${steps[i].name}`);
+        await runStep(steps[i].q);
+        if (!playing || single) break;
+        i++;
+        if (i >= steps.length) { if (el("stLoop").checked) i = 0; else break; }
+      }
+      if (playing) msg(single ? `Reached step ${i + 1}.` : "Sequence done.");
+    } catch (e) {
+      msg("Stopped: " + e.message, true);
+      hooks.send({ cmd: "hold" });
+    }
+    playing = false; cur = -1; render();
+  }
+  function stop(why) {
+    if (!playing) return;
+    playing = false;
+    hooks.send({ cmd: "hold" });
+    msg(why || "Stopped. The arm holds where it is.");
+  }
+  async function runStep(target) {
+    const s0 = hooks.state();
+    const base = s0 && (s0.targets_deg && s0.targets_deg.every(Number.isFinite) ? s0.targets_deg : s0.joints_deg);
+    if (!base) throw new Error("no joint reading");
+    const start = base.slice(0, 7);
+    const dist = Math.max(...target.map((t, i) => Math.abs(t - start[i])));
+    const dur = dist / Math.max(1, Teleop.speedDegS()) * 1000;  // straight line, all joints together
+    const t0 = performance.now();
+    let doneAt = null;
+    while (playing) {
+      if (!hooks.canMove()) throw new Error(hooks.blockedText());
+      if (Teleop.active()) { stop("Stopped: joystick/keys took over."); return; }
+      const f = dur ? Math.min(1, (performance.now() - t0) / dur) : 1;
+      const v = {};
+      target.forEach((t, i) => { v[i + 1] = Math.round((start[i] + (t - start[i]) * f) * 100) / 100; });
+      hooks.send({ cmd: "goto", v });
+      if (f >= 1) {
+        const q = hooks.state().joints_deg;
+        const close = target.every((t, i) => Math.abs(q[i] - t) < (i === 6 ? 4 : 2));
+        doneAt = doneAt || performance.now();
+        if (close || performance.now() - doneAt > 4000) { await sleep(300); return; }  // 4 s: a limit stopped it
+      }
+      await sleep(TICK_MS);
+    }
+  }
+
+  function download() {
+    const blob = new Blob([JSON.stringify(steps, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = "makerarm-steps.json"; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+  function upload(file) {
+    file.text().then(t => {
+      const s = JSON.parse(t);
+      if (!Array.isArray(s) || !s.every(valid)) throw new Error("not a steps file (a list of {name, q:[7 numbers]})");
+      steps = s; save(); render(); msg(`Loaded ${s.length} steps.`);
+    }).catch(e => msg("Could not load: " + e.message, true));
+  }
+
+  function init(h, demoSteps) {
+    hooks = h; demo = demoSteps || [];
+    load();
+    el("stAdd").onclick = add;
+    el("stPlay").onclick = () => play(0);
+    el("stStop").onclick = () => stop();
+    el("stDemo").hidden = !demo.length;
+    el("stDemo").onclick = () => {
+      if (playing) return;
+      if (steps.length && !confirm("Replace your steps with the tortilla demo?")) return;
+      steps = demo.map(s => ({ name: s.name, q: s.q.slice() })); save(); render();
+      msg("Tortilla demo loaded. Power on, press Reset tortilla, then Play.");
+    };
+    el("stSave").onclick = download;
+    el("stLoad").onclick = () => el("stFile").click();
+    el("stFile").onchange = (e) => { if (e.target.files[0]) upload(e.target.files[0]); e.target.value = ""; };
+    el("stClear").onclick = () => { if (!playing && steps.length && confirm("Delete all steps?")) { steps = []; save(); render(); } };
+    el("stReset").onclick = () => hooks.send({ cmd: "reset_world" });
+    render();
+  }
+  // the virtual world's status line for the selected arm
+  function renderWorld(s) {
+    const w = s && s.world, m = el("worldMsg");
+    if (!m) return;
+    if (!w) { m.textContent = "Virtual tortilla: shown once this arm is connected."; m.classList.remove("ok"); return; }
+    m.textContent = `Tortilla: ${w.note}` + (w.gap_mm != null ? `  ·  jaw gap ${Math.round(w.gap_mm)} mm` : "")
+      + (w.grasp ? `  ·  grasp point x ${Math.round(w.grasp[0] * 100)} y ${Math.round(w.grasp[1] * 100)} z ${Math.round(w.grasp[2] * 100)} cm` : "");
+    m.classList.toggle("ok", !!(w.tortilla.held || w.placed));
+  }
+  return { init, stop, renderWorld, get playing() { return playing; } };
+})();
+
+// ---------- real-time teleop: on-screen joysticks + held keys (same block in index.html and remote.html) ----------
+// Every 100 ms the joystick deflection / held keys become small relative steps for several joints at
+// once ({cmd:"move", v:{joint: deg}}). The server keeps targets at most 4° ahead of the real arm, and
+// letting go sends "hold", so the arm stops right away. Losing focus (tab switch, blur) also lets go.
+const Teleop = (() => {
+  const TICK_MS = 100, DEADZONE = 0.12;
+  const STICKS = [
+    { title: "Base · Shoulder", x: 1, y: 2, keys: "A D / W S" },
+    { title: "Wrist yaw · Elbow", x: 5, y: 3, keys: "J L / I K" },
+    { title: "Wrist roll · flex", x: 6, y: 4, keys: "← → / ↑ ↓" },
+  ];
+  // key code -> [joint, direction]; codes are layout independent (works on Spanish keyboards too)
+  const KEYS = {
+    KeyA: [1, -1], KeyD: [1, 1], KeyW: [2, 1], KeyS: [2, -1],
+    KeyJ: [5, -1], KeyL: [5, 1], KeyI: [3, 1], KeyK: [3, -1],
+    ArrowLeft: [6, -1], ArrowRight: [6, 1], ArrowUp: [4, 1], ArrowDown: [4, -1],
+    KeyO: [7, -1], KeyC: [7, 1],  // gripper: O open, C close
+  };
+  const SPEED_KEYS = { KeyZ: -0.1, KeyX: 0.1 };  // Z slower, X faster (10 % per press, hold to repeat)
+  let hooks = null, maxSpeed = 15, scale = 0.5, moving = false, inflight = false, warned = false;
+  const axes = {}, buttons = {}, keys = new Set(), dragging = new Set();
+  const knobs = [];  // [{el, stick, radius}]
+
+  function shape(v) {  // deadzone + curve: small deflections give fine control
+    const a = Math.abs(v);
+    return a < DEADZONE ? 0 : Math.sign(v) * Math.pow((a - DEADZONE) / (1 - DEADZONE), 1.6);
+  }
+  function keyAxis(j) {
+    let v = 0;
+    for (const k of keys) { const m = KEYS[k]; if (m && m[0] === j) v += m[1]; }
+    return Math.max(-1, Math.min(1, v));
+  }
+  function velocities() {
+    const v = {};
+    for (let j = 1; j <= 7; j++) {
+      const x = Math.max(-1, Math.min(1, (axes[j] || 0) + (buttons[j] || 0) + keyAxis(j)));
+      if (x) v[j] = x;
+    }
+    return v;
+  }
+  function releaseAll() {
+    keys.clear(); dragging.clear();
+    for (const j in axes) axes[j] = 0;
+    for (const j in buttons) buttons[j] = 0;
+    knobs.forEach(k => { k.el.style.transform = ""; });
+  }
+
+  function tick() {
+    if (!hooks) return;
+    const v = velocities();
+    const precise = keys.has("ShiftLeft") || keys.has("ShiftRight");
+    const perTick = maxSpeed * scale * (precise ? 0.4 : 1) * TICK_MS / 1000;
+    const deltas = {};
+    for (const [j, x] of Object.entries(v)) deltas[j] = Math.round(x * perTick * 100) / 100;
+    const any = Object.values(deltas).some(d => d !== 0);
+    const can = hooks.canMove();
+    document.querySelectorAll(".sticks").forEach(el => el.classList.toggle("off", !can));
+    document.querySelectorAll(".joint[data-n]").forEach(r => r.classList.toggle("sel", !!deltas[r.dataset.n]));
+    // keyboard moves the on-screen knobs too, so you see what the keys do
+    knobs.forEach(k => {
+      if (dragging.has(k.stick)) return;
+      const x = keyAxis(k.stick.x), y = keyAxis(k.stick.y), m = Math.hypot(x, y) || 1;
+      k.el.style.transform = x || y ? `translate(${x / m * k.radius()}px, ${-y / m * k.radius()}px)` : "";
+    });
+    if (!any) {
+      warned = false;
+      if (moving && !inflight) { moving = false; hooks.send({ cmd: "hold" }); }  // let go -> stop now
+      return;
+    }
+    if (!can) { if (!warned) { warned = true; hooks.blocked(); } return; }
+    if (inflight) return;  // never queue up moves: skip a tick instead
+    moving = true; inflight = true;
+    Promise.resolve(hooks.send({ cmd: "move", v: deltas })).finally(() => { inflight = false; });
+  }
+
+  function bindStick(el, stick) {
+    const knob = el.querySelector(".knob");
+    const radius = () => el.clientWidth * 0.36;
+    knobs.push({ el: knob, stick, radius });
+    let id = null;
+    const update = (e) => {
+      const r = el.getBoundingClientRect(), R = radius();
+      let dx = (e.clientX - r.left - r.width / 2) / R, dy = -(e.clientY - r.top - r.height / 2) / R;
+      const m = Math.hypot(dx, dy);
+      if (m > 1) { dx /= m; dy /= m; }
+      knob.style.transform = `translate(${dx * R}px, ${-dy * R}px)`;
+      axes[stick.x] = shape(dx); axes[stick.y] = shape(dy);
+    };
+    const end = (e) => {
+      if (e.pointerId !== id) return;
+      id = null; dragging.delete(stick);
+      axes[stick.x] = 0; axes[stick.y] = 0; knob.style.transform = "";
+    };
+    el.addEventListener("pointerdown", (e) => {
+      if (id !== null) return;
+      id = e.pointerId; dragging.add(stick);
+      el.setPointerCapture(id); e.preventDefault(); update(e);
+    });
+    el.addEventListener("pointermove", (e) => { if (e.pointerId === id) update(e); });
+    ["pointerup", "pointercancel", "lostpointercapture"].forEach(ev => el.addEventListener(ev, end));
+  }
+  function bindHoldButton(el, joint, dir) {
+    const stop = () => { buttons[joint] = 0; };
+    el.addEventListener("pointerdown", (e) => { e.preventDefault(); buttons[joint] = dir; });
+    ["pointerup", "pointerleave", "pointercancel"].forEach(ev => el.addEventListener(ev, stop));
+  }
+
+  function build(container, joints, speed) {
+    maxSpeed = speed || 15;
+    try { const s = parseFloat(localStorage.getItem("teleopScale")); if (s > 0) scale = s; } catch (e) {}
+    const name = (n) => (joints.find(j => j.n === n) || {}).name || "J" + n;
+    container.innerHTML = `
+      <div class="row" style="margin-top:0">
+        <label for="tSpeed">Speed</label>
+        <input type="range" id="tSpeed" min="5" max="100" step="5" style="width:120px" title="Z slower · X faster">
+        <span id="tSpeedVal" class="muted" style="min-width:76px;font-variant-numeric:tabular-nums"></span>
+        <span class="spacer"></span>
+        <button id="tGripOpen" title="O">Open gripper</button>
+        <button id="tGripClose" title="C">Close gripper</button>
+      </div>
+      <div class="sticks">${STICKS.map((s, i) => `
+        <div class="stickbox">
+          <div class="sticktitle">${s.title}</div>
+          <div class="stick" data-i="${i}">
+            <span class="ax up">J${s.y} +</span><span class="ax down">J${s.y} −</span>
+            <span class="ax left">J${s.x} −</span><span class="ax right">J${s.x} +</span>
+            <div class="knob"></div>
+          </div>
+          <div class="stickkeys"><kbd>${s.keys}</kbd></div>
+          <div class="stickhelp">${name(s.x)} ↔ · ${name(s.y)} ↕</div>
+        </div>`).join("")}
+      </div>`;
+    const slider = container.querySelector("#tSpeed");
+    slider.value = Math.round(scale * 100);
+    slider.addEventListener("input", () => setScale(slider.value / 100));
+    setScale(scale);
+    container.querySelectorAll(".stick").forEach(el => bindStick(el, STICKS[+el.dataset.i]));
+    // gripper (J7): closing is the + direction in the Maker Arm profile
+    bindHoldButton(container.querySelector("#tGripOpen"), 7, -1);
+    bindHoldButton(container.querySelector("#tGripClose"), 7, 1);
+  }
+
+  function setScale(f) {
+    scale = Math.min(1, Math.max(0.05, Math.round(f * 20) / 20));
+    try { localStorage.setItem("teleopScale", scale); } catch (e) {}
+    const slider = document.getElementById("tSpeed"), val = document.getElementById("tSpeedVal");
+    if (slider) slider.value = Math.round(scale * 100);
+    if (val) val.textContent = `${Math.round(scale * 100)} % · ${Math.round(maxSpeed * scale)}°/s`;
+  }
+
+  function init(container, joints, speed, h) {
+    hooks = h;
+    build(container, joints, speed);
+    setInterval(tick, TICK_MS);
+    window.addEventListener("blur", releaseAll);
+    document.addEventListener("visibilitychange", () => { if (document.hidden) releaseAll(); });
+    document.addEventListener("keyup", (e) => keys.delete(e.code));
+  }
+  // returns true when the key belongs to teleop (call it from the page's keydown handler)
+  function keydown(e) {
+    if (e.ctrlKey || e.metaKey || e.altKey) return false;
+    if (SPEED_KEYS[e.code]) { e.preventDefault(); setScale(scale + SPEED_KEYS[e.code]); return true; }
+    if (KEYS[e.code] || e.code === "ShiftLeft" || e.code === "ShiftRight") {
+      keys.add(e.code); e.preventDefault(); return true;
+    }
+    return false;
+  }
+  // stop now (e.g. before switching arm): sends hold if something was moving
+  function stop() {
+    releaseAll();
+    if (moving && hooks) { moving = false; hooks.send({ cmd: "hold" }); }
+  }
+  return { init, keydown, stop, speedDegS: () => maxSpeed * scale,
+           active: () => Object.keys(velocities()).length > 0, setGripEnabled: (on) => ["tGripOpen", "tGripClose"].forEach(id => {
+    const b = document.getElementById(id); if (b) b.disabled = !on; }) };
+})();
+
 function enableControls(canMove) {
   $("btnTake").disabled = !latest;
   $("btnHold").disabled = $("btnPark").disabled = !(st() && st().on);
-  document.querySelectorAll("button[data-j], #gripOpen, #gripClose").forEach(b => b.disabled = !canMove);
+  if (built) Teleop.setGripEnabled(canMove);
 }
 function pct(j, v) { return Math.min(100, Math.max(0, (v - j.lo) / (j.hi - j.lo) * 100)); }
 function render() {
@@ -352,12 +1059,13 @@ function render() {
   // arm labels with status
   [...$("armSelect").options].forEach(o => {
     const a = latest.arms[o.value];
-    const status = !a ? "" : a.offline ? "not responding" : a.state === "FAULT" ? "FAULT" : a.on ? "on" : "off";
+    const status = !a ? "" : a.connected === false ? (a.connecting ? "connecting…" : "not connected")
+      : a.offline ? "not responding" : a.state === "FAULT" ? "FAULT" : a.on ? "on" : "off";
     o.textContent = `${o.value} · ${status}`;
   });
   if (!s) return;
   const on = !!s.on, fault = s.state === "FAULT", offline = !!s.offline;
-  $("power").textContent = offline ? "Not responding" : fault ? "FAULT" : on ? "On" : "Off (power on at the arm laptop)";
+  $("power").textContent = s.connected === false ? "Not connected (arm laptop)" : offline ? "Not responding" : fault ? "FAULT" : on ? "On" : "Off (power on at the arm laptop)";
   $("power").className = "pill " + (fault || offline ? "fault" : on ? "on" : "off");
   enableControls(on && ctl === me);
   if (offline) { showMsg(`The ${armId} arm is not responding: ${s.error || ""}`, true); return; }
@@ -377,14 +1085,10 @@ function render() {
 
 document.addEventListener("keydown", (e) => {
   if (!built || ["SELECT", "INPUT"].includes(e.target.tagName)) return;
-  const k = e.key.toLowerCase();
-  if (e.repeat && !["arrowleft", "arrowright", "a", "d"].includes(k)) return;
-  if (/^[1-7]$/.test(k)) select(+k);
-  else if (k === "q") cycleArm(-1);
-  else if (k === "e") cycleArm(1);
-  else if (k === "arrowleft" || k === "a") { e.preventDefault(); jog(selected, -1); }
-  else if (k === "arrowright" || k === "d") { e.preventDefault(); jog(selected, 1); }
-  else if (k === " ") { e.preventDefault(); send({ cmd: "hold" }); }
+  if (Teleop.keydown(e) || e.repeat) return;
+  if (e.code === "KeyQ") cycleArm(-1);
+  else if (e.code === "KeyE") cycleArm(1);
+  else if (e.code === "Space") { e.preventDefault(); Teleop.stop(); Steps.stop(); send({ cmd: "hold" }); }
 });
 </script>
 </body>

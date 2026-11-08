@@ -20,9 +20,11 @@ ROOT = pathlib.Path(__file__).resolve().parent
 
 # ── Safety limits for a first session. Raise them only once you trust the setup. ──
 DEFAULT_SPEED_DEG_S = 15.0   # how fast the SDK ramps toward a target
-MAX_SPEED_DEG_S = 30.0       # the SDK examples' own ceiling
+WEB_SPEED_DEG_S = 60.0       # web app joysticks/keys at 100 % (Fast); Normal = 30, Slow = 15
+MAX_SPEED_DEG_S = 90.0       # our ceiling (the SDK profile allows 5 rad/s ~ 286 deg/s for teleop)
 MAX_STEP_DEG = 10.0          # largest single jog a remote command may ask for
 LIMIT_MARGIN_DEG = 5.0       # stay this far inside each joint's soft limits
+GRIPPER_MARGIN_DEG = 0.0     # ...except the gripper: it must reach its profile limit to close fully
 MAX_POWER_ON_TEMP_C = 70.0   # refuse to switch torque on while any motor is hotter than this
 
 JOINT_HELP = {
@@ -159,7 +161,8 @@ def open_arm(port: str | None = None, sim: bool = False, speed_deg_s: float = DE
 def safe_range_deg(arm: Arm, joint: int) -> tuple[float, float]:
     """Soft limits of a 1-based joint, shrunk by LIMIT_MARGIN_DEG, in degrees."""
     j = arm.config.joints[joint - 1]
-    margin = math.radians(LIMIT_MARGIN_DEG) + arm.config.limit_margin
+    extra = GRIPPER_MARGIN_DEG if "gripper" in (j.name or "") else LIMIT_MARGIN_DEG
+    margin = math.radians(extra) + arm.config.limit_margin
     return math.degrees(j.lo + margin), math.degrees(j.hi - margin)
 
 

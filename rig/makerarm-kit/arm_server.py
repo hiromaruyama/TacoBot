@@ -13,6 +13,7 @@ Safety model
 
 Wire format (JSON over LiveKit data messages)
   topic "arm/cmd"   controller -> arm   {"cmd": "jog", "joint": 1..7, "deg": +-x}
+                                        {"cmd": "move", "v": {"1": +-x, "2": ...}}  (several joints)
                                         {"cmd": "hold"} | {"cmd": "park"}
   topic "arm/state" arm -> everyone     {"on": bool, "state": str, "joints_deg": [...7],
                                          "targets_deg": [...7], "fault": str|null, "msg": str}
@@ -35,6 +36,7 @@ from armkit import (DEFAULT_SPEED_DEG_S, MAX_STEP_DEG, is_on, load_env, open_arm
 from lk import ARM_IDENTITY, CMD_TOPIC, STATE_TOPIC, mint_token
 
 STATE_HZ = 10
+MOVE_LEAD_DEG = 8.0  # joystick/held-key moves: target at most this far ahead -> stops in ~0.15 s at 60 deg/s
 
 
 class ArmBridge:
@@ -114,34 +116,78 @@ class ArmBridge:
         self.targets_deg = positions_deg(self.arm)
         return "holding"
 
-    def jog(self, joint: int, deg: float) -> str:
-        if not is_on(self.arm) or self.targets_deg is None:
-            return "ignored: arm is off (power it on first, next to the arm)"
-        if not 1 <= joint <= self.arm.config.n_joints:
-            return f"ignored: joint must be 1..{self.arm.config.n_joints}"
-        if not math.isfinite(deg) or abs(deg) > MAX_STEP_DEG:
-            return f"ignored: step must be within ±{MAX_STEP_DEG:g}°"
+    def _plan(self, joint: int, deg: float, now: float, lead: float) -> tuple[float | None, str]:
+        """Next target for one joint after a relative step, or None (with the reason) if it can't move."""
         lo, hi = safe_range_deg(self.arm, joint)
-        wanted = self.targets_deg[joint - 1] + deg
-        # Never let the target run more than one max step ahead of the measured position, so
-        # repeated jogs (held keys/buttons) stop soon after they stop arriving.
-        now = positions_deg(self.arm)[joint - 1]
-        if math.isfinite(now):
-            wanted = min(max(wanted, now - MAX_STEP_DEG), now + MAX_STEP_DEG)
-        clamped = min(max(wanted, lo), hi)
         current_target = self.targets_deg[joint - 1]
+        wanted = current_target + deg
+        # Never let the target run more than `lead` degrees ahead of the measured position, so
+        # repeated steps (held keys, joysticks) stop soon after they stop arriving.
+        if math.isfinite(now):
+            wanted = min(max(wanted, now - lead), now + lead)
+        clamped = min(max(wanted, lo), hi)
         if (clamped - current_target) * deg <= 0:
             # A joint resting outside the safe band (e.g. folded at zero) must never be pulled
-            # the opposite way by a jog: only moves back toward the inside are allowed.
+            # the opposite way: only moves back toward the inside are allowed.
             if not lo <= current_target + deg <= hi:
-                return f"J{joint} is at its safe limit ({current_target:+.1f}°); try the other direction"
-            return f"J{joint} catching up ({now:+.1f}° -> {current_target:+.1f}°)"
-        self.targets_deg[joint - 1] = clamped
-        ok = self.arm.set_joint_targets([math.radians(x) for x in self.targets_deg])
-        if not ok:
-            return "the arm rejected the target"
+                return None, f"J{joint} is at its safe limit ({current_target:+.1f}°); try the other direction"
+            return None, f"J{joint} catching up ({now:+.1f}° -> {current_target:+.1f}°)"
         note = " (at its safe limit)" if clamped != wanted else ""
-        return f"J{joint} -> {clamped:+.1f}°{note}"
+        return clamped, f"J{joint} -> {clamped:+.1f}°{note}"
+
+    def jog(self, joint: int, deg: float) -> str:
+        return self.move({joint: deg}, lead=MAX_STEP_DEG)
+
+    def move(self, deltas: dict[int, float], lead: float = MOVE_LEAD_DEG) -> str:
+        """Relative steps for several joints at once (joysticks / held keys), one target update."""
+        if not is_on(self.arm) or self.targets_deg is None:
+            return "ignored: arm is off (power it on first, next to the arm)"
+        n = self.arm.config.n_joints
+        for joint, deg in deltas.items():
+            if not 1 <= joint <= n:
+                return f"ignored: joint must be 1..{n}"
+            if not math.isfinite(deg) or abs(deg) > MAX_STEP_DEG:
+                return f"ignored: step must be within ±{MAX_STEP_DEG:g}°"
+        now = positions_deg(self.arm)
+        new = list(self.targets_deg)
+        msgs = []
+        for joint, deg in deltas.items():
+            if deg == 0:
+                continue
+            target, msg = self._plan(joint, deg, now[joint - 1], lead)
+            msgs.append(msg)
+            if target is not None:
+                new[joint - 1] = target
+        if new != self.targets_deg:
+            if not self.arm.set_joint_targets([math.radians(x) for x in new]):
+                return "the arm rejected the target"
+            self.targets_deg = new
+        return " · ".join(msgs) or "no movement"
+
+    def goto(self, targets: dict[int, float], lead: float = MOVE_LEAD_DEG) -> str:
+        """Absolute targets (step playback). Each one is clamped into the joint's safe range and to at
+        most `lead` degrees from the measured position, so a stream of setpoints is safe to send."""
+        if not is_on(self.arm) or self.targets_deg is None:
+            return "ignored: arm is off (power it on first, next to the arm)"
+        n = self.arm.config.n_joints
+        for joint, deg in targets.items():
+            if not 1 <= joint <= n:
+                return f"ignored: joint must be 1..{n}"
+            if not math.isfinite(deg):
+                return "ignored: target must be a number"
+        now = positions_deg(self.arm)
+        new = list(self.targets_deg)
+        for joint, deg in targets.items():
+            lo, hi = safe_range_deg(self.arm, joint)
+            t = min(max(deg, lo), hi)
+            if math.isfinite(now[joint - 1]):
+                t = min(max(t, now[joint - 1] - lead), now[joint - 1] + lead)
+            new[joint - 1] = t
+        if new != self.targets_deg:
+            if not self.arm.set_joint_targets([math.radians(x) for x in new]):
+                return "the arm rejected the target"
+            self.targets_deg = new
+        return "playing steps"
 
     def snapshot(self) -> dict:
         return {
@@ -236,6 +282,13 @@ async def main(args) -> None:
                     except (TypeError, ValueError):
                         continue
                     await act(bridge.jog, joint, deg)
+                elif cmd == "move":
+                    try:
+                        deltas = {int(k): float(v) for k, v in dict(msg.get("v") or {}).items()}
+                    except (TypeError, ValueError):
+                        continue
+                    if 0 < len(deltas) <= 7:
+                        bridge.last_msg = await bridge.run(bridge.move, deltas)
                 elif cmd == "hold":
                     await act(bridge.hold)
                 elif cmd == "clear":

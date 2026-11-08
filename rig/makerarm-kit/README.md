@@ -21,6 +21,7 @@ COM port) and one candleLight adapter (no COM port, uses gs_usb). macOS and Linu
 |---|---|
 | `web_app.py` + `static/index.html` | Arm laptop: web page at http://127.0.0.1:8765 (camera, arm dropdown, every joint). With `--livekit`, shares the arms and camera with the team |
 | `remote.py` + `static/remote.html` | **Teammates, from anywhere:** live arm camera + controls over LiveKit (no arm hardware needed) |
+| `sim_world.py` | Virtual tortilla + plate per arm and the grasp rule (forward kinematics from the SDK) |
 | `first_move.py` | Simplest test: nudge one joint a few degrees and back. Also lists ports |
 | `arm_server.py` | Runs next to an arm: joins a LiveKit room and accepts small jog commands |
 | `controller.py` | Runs anywhere: keyboard (or `--demo`) control over LiveKit |
@@ -68,8 +69,8 @@ git clone https://github.com/hiromaruyama/TacoBot.git
 cd TacoBot/rig/makerarm-kit
 bash setup.sh
 
-# 3. Try it without hardware
-./run.sh web_app.py --sim           # opens http://127.0.0.1:8765
+# 3. Try it without hardware: 3D view of two simulated arms, joysticks, keys
+./run.sh web_app.py --sim           # opens http://127.0.0.1:8765 -> Power on, then W A S D
 
 # 4. Plug in the arms' USB hub, find the ports, put them in .env
 ./run.sh first_move.py --list-ports # e.g. /dev/cu.usbmodem2101 and candle:0
@@ -77,18 +78,27 @@ open -e .env                        # ARM_PORTS=left=/dev/cu.usbmodem2101,right=
 
 # 5. Go
 ./run.sh first_move.py --read-only  # motors OFF: move an arm by hand, angles should change
-./run.sh                            # web app with the real arms
+./run.sh                            # web app with the real arms (add --livekit for the team)
 ```
 
 macOS notes:
-- **Ports:** SLCAN adapters are `/dev/cu.usbmodem…` or `/dev/cu.usbserial…`. Always use the
-  `cu.` name, not the `tty.` twin. The listing marks the likely ones with `*`.
+- **Ports:** SLCAN adapters are `/dev/cu.usbmodem…` or `/dev/cu.usbserial…`. Use the `cu.` name
+  (the `tty.` twin is accepted too). The listing marks the likely ones with `*`. The number in
+  `usbmodem2101` follows the USB socket: plug the hub into a different socket and it changes. The
+  web app's header shows the adapters it sees live (`USB: …`); update `ARM_PORTS` if it moved.
+- **Arms not connected at start** is fine: the web app starts anyway and connects each arm by
+  itself when its adapter is plugged in and the arm has power (or press **Connect**).
 - **candleLight** (`candle:0`) needs no driver on macOS: `libusb` ships inside the
   `libusb-package` dependency. If it isn't found, `brew install libusb` and try again.
 - **Camera:** the first time you click *Start camera*, allow it in the browser. If it stays
   black, enable your browser under System Settings → Privacy & Security → Camera, then restart
   the browser. USB cameras on the hub appear in the camera dropdown.
+- **Browser:** Chrome, Safari, Edge or Firefox. Joysticks, keys and the 3D view work in all of
+  them; `Cmd`/`Option` shortcuts are left alone, so `Cmd+R` still reloads (hold-keys are released
+  when the window loses focus). The 3D view and LiveKit need internet.
 - **Keyboard controller** (`controller.py`) reads single keys in Terminal/iTerm, arrows included.
+- **Stop the app** with `Ctrl-C` in its Terminal tab (it parks the arms first); closing the
+  browser tab does not stop it.
 - If `./run.sh` says *permission denied*: `chmod +x run.sh setup.sh`, or use `bash run.sh`.
 
 ## 2. Try it without hardware
@@ -152,16 +162,68 @@ python web_app.py --arms left=COM9,right=candle:0
 
 The browser opens at **http://127.0.0.1:8765** (also http://localhost:8765).
 
-1. **Start camera** and allow access. With several cameras, choose one in the dropdown.
+1. **Camera / 3D view**: **Start camera** and allow access (several cameras: pick one), or switch to
+   **3D view**: the arm's real CAD model (the SDK's URDF) moving with the live joint angles of every
+   arm, colored by state (grey off, light on, red fault). Drag to orbit, scroll to zoom. It's the
+   default with `--sim`, so you can test everything without hardware. **Share view with team**
+   sends whichever one is showing (keep that tab visible while sharing the 3D view). Needs internet
+   (three.js and the model load from jsDelivr / esm.sh). The gripper jaws are an uncalibrated preview.
 2. Pick the arm in the **Arm** dropdown, or switch with `Q` / `E`.
 3. **Power on**, which asks you to confirm. The arm holds where it is.
-4. Move with **−** / **+** (keep pressed to keep moving), **Open/Close gripper**, or the keys:
-   `1`–`7` pick a joint, `←`/`→` or `A`/`D` move it, `Space` holds.
+4. Move in real time with the **3 on-screen joysticks** (mouse or touch; let go and the arm stops)
+   or by **holding keys** (several at once, no gamepad needed):
+
+   | Keys | Joint | Keys | Joint |
+   |---|---|---|---|
+   | `A` / `D` | J1 base | `W` / `S` | J2 shoulder |
+   | `J` / `L` | J5 wrist yaw | `I` / `K` | J3 elbow |
+   | `←` / `→` | J6 wrist roll | `↑` / `↓` | J4 wrist flex |
+   | `O` / `C` | gripper open / close | `Shift` (hold) | precise, 40 % speed |
+   | `Z` / `X` | speed − / + (10 % steps) | | |
+   | `Space` | stop (hold) | `Q` / `E` | switch arm |
+
+   **Speed** slider (or `Z`/`X`): 5–100 % of 60°/s (change the top speed with `--speed`).
+   The gripper closes all the way to its profile limit (other joints stay 5° inside theirs). Switching tabs or windows
+   releases every key and the arm holds.
 5. **Park & power off** returns the arm to where it was when you powered it on and releases torque.
    Ctrl-C in the terminal parks every arm and quits.
 
-Start with 1–2° steps on J1 (base) and J4–J6 (wrist); J2/J3 carry the arm's weight.
-If an arm can't be reached, it shows as *offline* and the other one still works.
+Start around 30 % with J1 (base) and J4–J6 (wrist); J2/J3 carry the arm's weight.
+The app starts even with **no arm connected**. It checks the USB adapters live (every 3 s, shown as
+`USB: COM9, candle:0` in the header) and connects an arm by itself as soon as its adapter is plugged in
+and its motors answer (retrying every 10 s). Pick a *not connected* arm and press **Connect** to try
+right away. Unplugging an adapter while its motors are off frees that arm; it reconnects when plugged
+back in. The other arm keeps working meanwhile.
+
+### Steps & the virtual tortilla (pick & place practice)
+
+Each arm has a small virtual world in the 3D view: a **tortilla** (16 cm) in front of it and a
+**plate** to its right. It works in the simulator and with the real arms (a digital twin; there's no
+real tortilla involved).
+
+- **The tortilla is soft and flat: you can't pinch it straight off the table.** Like a real one:
+  1. **Press:** lower the **open** gripper until the **grasp point** (the dot between the jaws, from
+     the SDK's URDF) touches the tortilla's outer edge (the dot turns blue while pressing).
+  2. **Push** about 3 cm toward the centre: the edge bunches up into a **fold** ("fold 60 %…
+     fold ready"). Pushing past a full fold slides the whole tortilla.
+  3. **Close** the jaws on the fold (within 3 cm of it): "grasped by the fold!" (dot green). Closing on
+     the flat part fails and says why.
+  4. Held, it **hangs** from the jaws and bends with gravity; where it touches the table it lies on it.
+     **Open** to let go: it drops flat onto the table, or onto the plate ("placed on the plate!").
+  **Reset tortilla** puts it back.
+- **Gripper cam:** the small inset is a camera mounted on the wrist, looking down the jaws, to aim
+  before closing. Hide/show it with the button on the view. It is included when you share the view.
+- **Steps card:** **+ Add current pose** records all 7 joints (the gripper too), then **▶ Play** goes
+  through them in order (or **Go** for one step), at the Speed slider's speed, all joints arriving
+  together. **Loop** repeats. Steps stay in the browser; **Save…/Load…** as JSON to share them.
+  **Load tortilla demo** loads a 9-step sequence: press the edge, push to fold it, close on the fold, lift, carry it to the plate and let go.
+- **Safety:** playback streams setpoints that the server clamps like the joysticks (safe range, at
+  most 8° ahead of the real arm). A joystick, a key, `Space`, switching arm or losing control stops it
+  and the arm holds. Remote teammates need control to play steps.
+
+The fold/grasp rules are geometric checks and the drape is a visual model, not a cloth simulation: use them to practise approach, the press-and-push motion and timing.
+The gripper angle → jaw gap is the SDK's uncalibrated preview (0° closed, −96° fully open).
+Try it now: `python web_app.py --sim` → **Power on** → **Load tortilla demo** → **▶ Play**.
 
 ## 7. Team control from anywhere (LiveKit)
 
@@ -204,8 +266,8 @@ bash setup.sh                        # Windows: powershell -ExecutionPolicy Bypa
 # put the team's LIVEKIT_* values in .env
 ./run.sh remote.py                   # Windows: .\run.ps1 remote.py   ->  opens http://127.0.0.1:8770
 ```
-Type your name and **Join**, and you'll see the arm camera. Press **Take control** to drive. Same
-controls as the local page: arm dropdown or `Q`/`E`, joints `1`–`7`, `←`/`→`, hold-to-repeat.
+Type your name and **Join**, and you'll see the arm camera, or the **3D view** drawn from the arms' live data (no camera needed). Press **Take control** to drive. Same
+controls as the local page: joysticks, the same held keys, arm dropdown or `Q`/`E`.
 
 **Rules (enforced by the arm laptop):**
 - **One controller at a time.** Others see who has control and must wait for *Release control*.
@@ -217,7 +279,7 @@ controls as the local page: arm dropdown or `Q`/`E`, joints `1`–`7`, `←`/`�
 
 Wire format (JSON over LiveKit data, room `LIVEKIT_ROOM`): `arm/state` from `arm-host` at 5 Hz
 (`arms`, `controller`, `viewers`, `info`); `arm/cmd` to `arm-host` (`take`, `release`, `ping`,
-`jog {arm, joint, deg}`, `hold {arm}`, `park {arm}`); `arm/reply` back to the sender.
+`jog {arm, joint, deg}`, `move {arm, v: {joint: deg, ...}}` (joysticks, 10 Hz), `goto {arm, v: {joint: deg}}` (steps), `reset_world {arm}`, `hold {arm}`, `park {arm}`); `arm/reply` back to the sender.
 
 Terminal-only alternative for a single arm: `python arm_server.py` next to the arm (type `MOVE`)
 and `python controller.py` anywhere (`1`–`7`, `a`/`d`, `[`/`]` step, `h` hold, `p` park, `q` quit).
@@ -228,8 +290,9 @@ and `python controller.py` anywhere (`1`–`7`, `a`/`d`, `[`/`]` step, `h` hold,
   terminal), never by a remote peer.
 - A motor above **70 °C** blocks power-on. The web app shows joint temperatures in orange from
   60 °C and red above 70 °C.
-- Each step is at most 10° and ramps at 15°/s. Targets stay 5° inside each joint's soft limits,
-  never run more than 10° ahead of the real position, and a joint resting outside its safe band
+- Each step is at most 10°; the web app ramps at up to 60°/s (`--speed`), the CLI tools at 15°/s. Targets stay 5° inside each joint's soft limits (gripper: 0°, so it closes fully),
+  never run more than 10° ahead of the real position (8° for joystick/key moves, so the arm stops
+  within ~0.15 s when input stops), and a joint resting outside its safe band
   can only be moved back toward the inside.
 - Remote team control: one controller at a time, heartbeat every second (control lost after 5 s
   of silence), anyone can Hold/Park, power-on and fault clearing only on the arm laptop.

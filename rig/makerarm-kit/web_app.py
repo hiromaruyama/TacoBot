@@ -24,21 +24,25 @@ import json
 import math
 import os
 import pathlib
+import sys
 import time
 import webbrowser
+from types import SimpleNamespace
 from dataclasses import dataclass, field
 
 from aiohttp import web
 
 from arm_server import ArmBridge
-from armkit import (DEFAULT_SPEED_DEG_S, JOINT_HELP, MAX_STEP_DEG, load_env, open_arm, required_env,
-                    safe_range_deg, safe_shutdown)
+from armkit import (WEB_SPEED_DEG_S, JOINT_HELP, MAX_STEP_DEG, _config, is_on, load_env, open_arm,
+                    required_env, safe_range_deg, safe_shutdown, usb_serial_ports)
+from candle_backend import candle_index, is_candle_port, list_candle_devices
+from sim_world import DEMO, World
 
 HERE = pathlib.Path(__file__).resolve().parent
 STATIC = HERE / "static"
 OFF_MSG = "Motors off. Press Power on when the area is clear."
 LOCAL = "local"                    # origin of commands from this laptop's page
-REMOTE_ALLOWED = {"jog", "hold", "park"}
+REMOTE_ALLOWED = {"jog", "move", "goto", "hold", "park", "reset_world"}
 ANYONE_ALLOWED = {"hold", "park"}  # stop actions: any remote viewer may use them
 CONTROL_IDLE_S = 60.0              # a controller that sends no commands loses control after this long
 HEARTBEAT_S = 5.0                  # ...and one whose page stops sending heartbeats (tab closed, Wi-Fi gone)
@@ -47,6 +51,8 @@ INVITE_HOURS = 4                   # default lifetime of an invite link (max 12)
 DEFAULT_REMOTE_PAGE = ("https://htmlpreview.github.io/?https://github.com/hiromaruyama/TacoBot/blob/"
                        "rig/makerarm-web-kit/rig/makerarm-kit/static/remote.html")
 STATE_HZ = 5
+WATCH_S = 3.0                      # how often the live watcher looks at the USB adapters
+RETRY_S = 10.0                     # adapter plugged in but motors silent: retry connecting this often
 
 
 @dataclass
@@ -56,9 +62,42 @@ class ArmSlot:
     bridge: ArmBridge | None = None
     error: str | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    connecting: bool = False
+    world: World = field(default_factory=World)  # virtual tortilla + plate for pick & place practice
+    present: bool | None = None     # adapter seen on USB by the live watcher (None = unknown / sim)
+    next_try: float = 0.0
 
     def info(self) -> dict:
-        return {"id": self.id, "port": self.port or "sim", "ok": self.bridge is not None, "error": self.error}
+        return {"id": self.id, "port": self.port or "sim", "ok": self.bridge is not None, "error": self.error,
+                "connecting": self.connecting, "present": self.present}
+
+
+def open_connected(port: str | None, sim: bool, speed: float):
+    """Open and connect one arm (read-only, torque stays off). Blocking: run it in a thread."""
+    arm = open_arm(port=port, sim=sim, speed_deg_s=speed)
+    arm.connect()  # closes the adapter again by itself if no motor answers
+    return arm
+
+
+def adapters_present() -> list[str]:
+    """USB-CAN adapters plugged in right now: COMx or /dev/... (SLCAN) and candle:N (candleLight)."""
+    return [p.device for p in usb_serial_ports()] + list_candle_devices()
+
+
+def adapter_present(port: str | None, present: list[str]) -> bool | None:
+    if not port:
+        return None  # auto-detect: unknown, just try
+    if is_candle_port(port):
+        return f"candle:{candle_index(port)}" in present
+    if port.startswith("can") or port.startswith("socketcan:"):
+        # Linux SocketCAN (can0, socketcan:can1): a network interface, not a USB serial port
+        channel = port.split(":", 1)[1] if ":" in port else port
+        if sys.platform.startswith("linux"):
+            return os.path.exists(f"/sys/class/net/{channel}")
+        return None  # can't tell here: just try
+    # macOS lists each adapter once, as /dev/cu.*; accept its /dev/tty.* twin in .env too
+    norm = lambda x: x.lower().replace("/dev/tty.", "/dev/cu.")  # noqa: E731
+    return norm(port) in (norm(x) for x in present)
 
 
 def parse_arms(spec: str) -> list[tuple[str, str]]:
@@ -79,8 +118,7 @@ def open_slots(arms: list[tuple[str, str | None]], sim: bool, speed: float) -> l
     for name, port in arms:
         slot = ArmSlot(name, port)
         try:
-            arm = open_arm(port=port, sim=sim, speed_deg_s=speed)
-            arm.connect()  # read-only; torque stays off until "Power on" in the page
+            arm = open_connected(port, sim, speed)  # read-only; torque stays off until "Power on"
             slot.bridge = ArmBridge(arm)
             slot.bridge.last_msg = OFF_MSG
             print(f"[web] arm '{name}' ready on {port or 'simulator'}")
@@ -88,7 +126,8 @@ def open_slots(arms: list[tuple[str, str | None]], sim: bool, speed: float) -> l
             if isinstance(exc, KeyboardInterrupt):
                 raise
             slot.error = str(exc) or type(exc).__name__
-            print(f"[web] arm '{name}' OFFLINE ({port}): {slot.error}")
+            print(f"[web] arm '{name}' not connected ({port}): {slot.error}")
+            slot.next_try = time.monotonic() + RETRY_S
         slots.append(slot)
     return slots
 
@@ -130,16 +169,19 @@ class Control:
 class Hub:
     """All arms + the control lock. Both the local page and LiveKit go through run()."""
 
-    def __init__(self, slots: list[ArmSlot], sim: bool) -> None:
+    def __init__(self, slots: list[ArmSlot], sim: bool, speed: float = WEB_SPEED_DEG_S) -> None:
         self.slots = slots
+        self.speed = speed
         self.by_id = {s.id: s for s in slots}
         self.sim = sim
         self.control = Control()
+        self.adapters: list[str] = []
         self.viewers: set[str] = set()
         self.livekit_on = False
-        ref = next((s.bridge.arm for s in slots if s.bridge), None)
+        # joint names/limits come from the arm profile, so the page works before any arm is connected
+        ref = SimpleNamespace(config=_config(speed, rate_hz=None))
         self.joints: list[dict] = []
-        if ref is not None:
+        if True:
             for i, j in enumerate(ref.config.joints, start=1):
                 lo, hi = safe_range_deg(ref, i)
                 self.joints.append({"n": i, "name": (j.name or f"J{i}").replace("_", " "),
@@ -147,15 +189,82 @@ class Hub:
                                     "lo": round(lo, 1), "hi": round(hi, 1)})
 
     def info(self) -> dict:
-        return {"arms": [s.info() for s in self.slots], "joints": self.joints, "max_step": MAX_STEP_DEG,
+        return {"arms": [s.info() for s in self.slots], "adapters": self.adapters, "joints": self.joints, "max_step": MAX_STEP_DEG, "demo": DEMO,
+                "speed": self.speed,
                 "sim": self.sim, "livekit": self.livekit_on}
 
     def team(self) -> dict:
         return {"controller": self.control.holder, "viewers": sorted(self.viewers)}
 
+    async def connect(self, slot: ArmSlot, auto: bool = False) -> str:
+        """(Re)connect an arm that isn't connected. Motors stay off."""
+        if slot.bridge is not None:
+            return f"the {slot.id} arm is already connected"
+        if slot.connecting:
+            return f"already connecting the {slot.id} arm..."
+        slot.connecting = True
+        try:
+            arm = await asyncio.to_thread(open_connected, slot.port, self.sim, self.speed)
+        except (Exception, SystemExit) as exc:  # SystemExit: port auto-detection explains itself that way
+            err = str(exc) or type(exc).__name__
+            if not auto or err != slot.error:
+                print(f"[web] arm '{slot.id}' not connected ({slot.port}): {err}")
+            slot.error = err
+            slot.next_try = time.monotonic() + RETRY_S
+            return f"could not connect the {slot.id} arm: {err}"
+        finally:
+            slot.connecting = False
+        slot.bridge = ArmBridge(arm)
+        slot.bridge.last_msg = OFF_MSG
+        slot.error = None
+        print(f"[web] arm '{slot.id}' connected on {slot.port or 'simulator'}")
+        return f"{slot.id} arm connected on {slot.port or 'simulator'}. Motors are off."
+
+    async def drop(self, slot: ArmSlot, why: str) -> None:
+        """Forget an arm whose adapter was unplugged (only while its motors are off)."""
+        bridge, slot.bridge = slot.bridge, None
+        slot.error = why
+        print(f"[web] arm '{slot.id}': {why}")
+        try:
+            await bridge.run(bridge.arm.disconnect)
+        except Exception:  # noqa: BLE001
+            pass
+        bridge.pool.shutdown(wait=False)
+
+    async def watch(self) -> None:
+        """Live connection check: notices adapters plugged in or out and (re)connects the arms."""
+        while True:
+            try:
+                self.adapters = [] if self.sim else await asyncio.to_thread(adapters_present)
+            except Exception:  # noqa: BLE001
+                self.adapters = []
+            for slot in self.slots:
+                present = None if self.sim else adapter_present(slot.port, self.adapters)
+                was, slot.present = slot.present, present
+                if slot.bridge is not None:
+                    if present is False and not is_on(slot.bridge.arm):
+                        async with slot.lock:
+                            await self.drop(slot, f"adapter {slot.port} unplugged; plug it back in and it reconnects")
+                    continue
+                if present is False:
+                    seen = ", ".join(self.adapters) or "none"
+                    slot.error = (f"adapter {slot.port} is not plugged in (or the USB switch points at another "
+                                  f"laptop). Adapters seen now: {seen}. On macOS the number in /dev/cu.usbmodem… "
+                                  "changes with the USB socket: update ARM_PORTS in .env if so.")
+                    continue
+                if slot.connecting:
+                    continue
+                if present and was is False:
+                    print(f"[web] adapter {slot.port} plugged in; connecting the {slot.id} arm...")
+                    slot.next_try = 0
+                if time.monotonic() >= slot.next_try:
+                    asyncio.create_task(self.connect(slot, auto=True))
+            await asyncio.sleep(WATCH_S)
+
     async def state(self, slot: ArmSlot) -> dict:
         if slot.bridge is None:
-            return {"offline": True, "error": slot.error}
+            return {"offline": True, "connected": False, "connecting": slot.connecting,
+                    "present": slot.present, "error": slot.error}
         try:
             await slot.bridge.run(slot.bridge.refresh_if_off)
         except Exception as exc:  # adapter/bus trouble: report it, don't spam tracebacks
@@ -168,7 +277,9 @@ class Hub:
         if slot.error:
             print(f"[web] arm '{slot.id}' is answering again")
             slot.error = None
-        return await slot.bridge.run(slot.bridge.snapshot)
+        snap = await slot.bridge.run(slot.bridge.snapshot)
+        snap["world"] = slot.world.update(snap["joints_deg"])
+        return snap
 
     async def run(self, msg: dict, origin: str) -> str:
         """Execute one command from the local page (origin=LOCAL) or a remote identity."""
@@ -190,8 +301,14 @@ class Hub:
         slot = self.by_id.get(str(msg.get("arm") or ""))
         if slot is None:
             return f"unknown arm {msg.get('arm')!r}"
+        if cmd == "reset_world":
+            return slot.world.reset()
+        if cmd == "connect":
+            if origin != LOCAL:
+                return "connecting arms is done on the arm laptop"
+            return await self.connect(slot)
         if slot.bridge is None:
-            return f"arm '{slot.id}' is offline: {slot.error}"
+            return f"arm '{slot.id}' is not connected: {slot.error}"
         bridge = slot.bridge
         async with slot.lock:  # one command at a time per arm
             try:
@@ -208,6 +325,16 @@ class Hub:
                     if not math.isfinite(deg):
                         raise ValueError("deg")
                     result = await bridge.run(bridge.jog, joint, deg)
+                elif cmd == "goto":  # step playback: absolute setpoints {"v": {"1": deg, ...}}
+                    targets = {int(k): float(v) for k, v in dict(msg.get("v") or {}).items()}
+                    if not 0 < len(targets) <= 7 or not all(math.isfinite(v) for v in targets.values()):
+                        raise ValueError("v")
+                    result = await bridge.run(bridge.goto, targets)
+                elif cmd == "move":  # joysticks / held keys: {"v": {"1": deg, "2": deg, ...}}
+                    deltas = {int(k): float(v) for k, v in dict(msg.get("v") or {}).items()}
+                    if not 0 < len(deltas) <= 7 or not all(math.isfinite(v) for v in deltas.values()):
+                        raise ValueError("v")
+                    result = await bridge.run(bridge.move, deltas)
                 else:
                     return f"unknown cmd {cmd!r}"
             except (TypeError, ValueError):
@@ -216,7 +343,7 @@ class Hub:
                 result = f"error: {exc}"
         who = "" if origin == LOCAL else f" ({origin})"
         bridge.last_msg = result + who
-        if cmd != "jog" or origin != LOCAL:
+        if cmd not in ("move", "goto") and (cmd != "jog" or origin != LOCAL):  # moves arrive 10x/s: don't log them
             print(f"[web] {slot.id} {cmd}{who}: {result}")
         return result
 
@@ -316,7 +443,8 @@ def make_app(hub: Hub, use_livekit: bool) -> web.Application:
         slot = hub.by_id.get(request.query.get("arm") or "")
         if slot is None:
             raise web.HTTPBadRequest(text="unknown arm")
-        return web.json_response({**await hub.state(slot), "team": hub.team()})
+        return web.json_response({**await hub.state(slot), "team": hub.team(),
+                                  "arms": [s.info() for s in hub.slots], "adapters": hub.adapters})
 
     async def command(request: web.Request):
         try:
@@ -361,12 +489,12 @@ def make_app(hub: Hub, use_livekit: bool) -> web.Application:
         return web.json_response({"link": f"{page}#{frag}", "name": name, "identity": identity, "hours": hours})
 
     async def lk_ctx(app):
-        task = None
+        tasks = [asyncio.create_task(hub.watch())]  # live USB / arm connection check
         if use_livekit:
             hub.livekit_on = True
-            task = asyncio.create_task(livekit_task(hub))
+            tasks.append(asyncio.create_task(livekit_task(hub)))
         yield
-        if task:
+        for task in tasks:
             task.cancel()
             try:
                 await task
@@ -399,7 +527,7 @@ def main() -> None:
     ap.add_argument("--sim", action="store_true", help="simulated motors, no hardware")
     ap.add_argument("--arms", help="name=PORT list, e.g. left=COM9,right=COM10 (default: ARM_PORTS / ARM_PORT)")
     ap.add_argument("--livekit", action="store_true", help="also put the arms in the LiveKit room for the team")
-    ap.add_argument("--speed", type=float, default=DEFAULT_SPEED_DEG_S, help="deg/s ramp speed")
+    ap.add_argument("--speed", type=float, default=WEB_SPEED_DEG_S, help="deg/s at Fast (Normal = half)")
     ap.add_argument("--http-port", type=int, default=8765)
     ap.add_argument("--no-browser", action="store_true", help="don't open the browser")
     a = ap.parse_args()
@@ -420,13 +548,14 @@ def main() -> None:
 
     slots = open_slots(arms, a.sim, a.speed)
     if not any(s.bridge for s in slots):
-        raise SystemExit("no arm could be opened; check the USB cables and ports (first_move.py --list-ports)")
+        print("[web] no arm connected yet: starting anyway. Plug in / power the arms and they connect by "
+              "themselves (or press Connect in the page).")
 
     url = f"http://127.0.0.1:{a.http_port}"
     print(f"[web] open {url}   (Ctrl-C to park and quit)")
     if not a.no_browser:
         webbrowser.open(url)
-    web.run_app(make_app(Hub(slots, a.sim), a.livekit), host="127.0.0.1", port=a.http_port, print=None)
+    web.run_app(make_app(Hub(slots, a.sim, a.speed), a.livekit), host="127.0.0.1", port=a.http_port, print=None)
 
 
 if __name__ == "__main__":
