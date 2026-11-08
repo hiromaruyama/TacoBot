@@ -19,6 +19,7 @@
     }
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body { margin: 0; background: var(--bg); color: var(--text);
          font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
   header { display: flex; align-items: center; gap: 10px; padding: 14px 20px; flex-wrap: wrap;
@@ -70,6 +71,11 @@
               transform: translateX(-2px); transition: left .1s linear; }
   .bar .tgt { position: absolute; top: -4px; width: 10px; height: 14px; border-radius: 4px;
               border: 2px solid var(--accent); transform: translateX(-5px); }
+  .view3d { position: absolute; inset: 0; background: #16181c; }
+  .label3d { position: absolute; transform: translate(-50%, 0); background: rgba(0,0,0,.6); color: #fff; font-size: 12px;
+             padding: 2px 8px; border-radius: 6px; white-space: nowrap; pointer-events: none; }
+  .label3d.sel { background: var(--accent); }
+  .label3d.hint3d { left: 8px; bottom: 8px; transform: none; color: #bbb; font-size: 11px; background: rgba(0,0,0,.4); }
   .sticks { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
   .sticks.off .stick { opacity: .45; }
   .stickbox { text-align: center; min-width: 0; }
@@ -123,6 +129,11 @@
 <main id="app" hidden>
   <section class="card">
     <h2>Camera</h2>
+    <div class="row" style="margin-top:0;margin-bottom:8px">
+      <div class="seg" id="viewSeg"><button data-v="video">Video</button><button data-v="3d">3D view</button></div>
+      <span class="muted">3D view is drawn from the arms' live joint data</span>
+    </div>
+    <div id="view3dBox" class="cam" hidden><div id="view3d" class="view3d"></div></div>
     <div id="videos"><div class="cam cam-empty" id="noVideo">Waiting for the arm laptop to share its camera…</div></div>
     <div class="row muted" id="people">—</div>
   </section>
@@ -213,6 +224,7 @@ async function join() {
     await room.connect(t.url, t.token);
     setConn("Connected as " + t.name, "on");
     $("joinCard").hidden = true; $("app").hidden = false;
+    setView(view, false);
     showMsg("Connected. Waiting for the arm laptop…");
     renderPeople();
     setInterval(staleCheck, 1000);
@@ -229,8 +241,23 @@ async function join() {
 function setConn(text, cls) { $("conn").textContent = text; $("conn").className = "pill " + cls; }
 
 // ---------- video ----------
+let view = "3d", viewChosen = false;
+function setView(v, byUser = true) {
+  view = v; if (byUser) viewChosen = true;
+  $("viewSeg").querySelectorAll("button").forEach(b => b.classList.toggle("sel", b.dataset.v === v));
+  $("view3dBox").hidden = v !== "3d";
+  $("videos").hidden = v === "3d";
+  if (v === "3d") Arm3D.mount($("view3d")).then(feed3d).catch(() => {});
+}
+$("viewSeg").querySelectorAll("button").forEach(b => b.onclick = () => setView(b.dataset.v));
+function feed3d() {
+  if (!latest || !latest.info) return;
+  Arm3D.setArms(latest.info.arms.map(a => a.id));
+  for (const [id, s] of Object.entries(latest.arms || {})) Arm3D.update(id, s);
+}
 function onTrack(track, pub, participant) {
   if (track.kind !== "video") return;
+  if (!viewChosen) setView("video", false);  // a real camera arrived: show it (3D stays one click away)
   $("noVideo")?.remove();
   const box = document.createElement("div"); box.className = "cam";
   const el = track.attach(); el.muted = true; el.playsInline = true;
@@ -259,6 +286,7 @@ function onData(payload, participant, kind, topic) {
   latest = data; latestAt = Date.now();
   if (!built) build();
   render();
+  feed3d();
 }
 function staleCheck() {
   if (!latest || Date.now() - latestAt > 3000) {
@@ -312,7 +340,8 @@ function build() {
 }
 function chooseArm(id) {
   if (built && armId && id !== armId) Teleop.stop();  // the old arm holds before we switch
-  armId = id; $("armSelect").value = id;
+  armId = id;
+  Arm3D.select(id); $("armSelect").value = id;
   $("moveTitle").textContent = `Movement · ${id} arm`;
   try { localStorage.setItem("remoteArm", id); } catch (e) {}
   if (latest) render();
@@ -322,6 +351,187 @@ function cycleArm(dir) {
   const i = all.findIndex(a => a.id === armId);
   chooseArm(all[(i + dir + all.length) % all.length].id);
 }
+// ---------- 3D view of the arms (same block in index.html and remote.html) ----------
+// The SDK's own URDF (CAD of the Maker Arm v1, pinned to the SDK commit in requirements.txt) driven by
+// the live joint angles. Motor degrees map 1:1 onto the URDF joints exactly like the SDK's gravity
+// model (maker_arm/gravity.py): root rotation (90°, 0, 180°) and the wrist-yaw axis flipped.
+// The gripper's angle -> jaw gap is a linear preview (0° closed, -96° fully open), not calibrated.
+const Arm3D = (() => {
+  const LIB = {
+    three: "https://esm.sh/three@0.160.0",
+    orbit: "https://esm.sh/three@0.160.0/examples/jsm/controls/OrbitControls.js",
+    urdf: "https://esm.sh/urdf-loader@0.12.3?deps=three@0.160.0",
+  };
+  const URDF_URL = "https://cdn.jsdelivr.net/gh/makermods-robotics/maker-arm-sdk@" +
+    "0245316c05cb3e8d900f35e70c08e2e18e36731e/urdf/maker_arm/robot.urdf";
+  const JOINTS = ["link_002_joint", "link_003_joint", "link_004_joint", "link_005_joint", "link_006_joint", "link_007_joint"];
+  const SIGN = [1, 1, 1, 1, -1, 1];  // J5 wrist yaw: URDF axis is opposite to the motor's
+  const GRIP_TRAVEL = 0.0524125, GRIP_OPEN_DEG = -96;
+  const SPACING = 0.6;               // metres between the arms in the view
+  const COLORS = { on: 0xc9d3e3, off: 0x8d8c88, fault: 0xd9645f, none: 0x5b5a57 };
+  let T = null, U = null, renderer, scene, camera, controls, host, labels, ready = null, selected = null;
+  const arms = {};                   // id -> {group, robot, cur, goal, status, label, mats}
+  let order = [];
+
+  function mount(el) {
+    host = el;
+    if (!ready) ready = init().catch(e => {
+      host.innerHTML = `<div class="cam-empty">3D view unavailable: ${e.message}</div>`;
+      throw e;
+    });
+    return ready;
+  }
+
+  async function init() {
+    const [THREE, orbit, urdf] = await Promise.all([import(LIB.three), import(LIB.orbit), import(LIB.urdf)]);
+    T = THREE; U = urdf.default;
+    renderer = new T.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+    renderer.domElement.style.cssText = "width:100%;height:100%;display:block;touch-action:none";
+    host.innerHTML = "";
+    host.appendChild(renderer.domElement);
+    labels = document.createElement("div");
+    labels.style.cssText = "position:absolute;inset:0;pointer-events:none";
+    host.appendChild(labels);
+    const hint = document.createElement("div");
+    hint.className = "label3d hint3d";
+    hint.textContent = "3D from live joint data · drag to orbit · scroll to zoom";
+    host.appendChild(hint);
+
+    scene = new T.Scene();
+    scene.background = new T.Color(0x16181c);
+    camera = new T.PerspectiveCamera(40, 16 / 9, 0.01, 20);
+    camera.position.set(0.0, 0.75, 1.45);
+    controls = new orbit.OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 0.18, 0);
+    controls.enableDamping = true;
+    controls.update();
+    scene.add(new T.HemisphereLight(0xffffff, 0x30343a, 1.6));
+    const sun = new T.DirectionalLight(0xffffff, 1.6);
+    sun.position.set(1, 2, 1.5);
+    scene.add(sun);
+    const grid = new T.GridHelper(2.4, 24, 0x4a4f58, 0x2a2e35);
+    scene.add(grid);
+
+    new ResizeObserver(resize).observe(host);
+    resize();
+    let last = performance.now();
+    renderer.setAnimationLoop((now) => {
+      const dt = Math.min(0.1, (now - last) / 1000); last = now;
+      const a = 1 - Math.exp(-dt * 12);   // smooth the 4-5 Hz state updates
+      for (const id of order) step(arms[id], a);
+      controls.update();
+      renderer.render(scene, camera);
+      placeLabels();
+    });
+  }
+
+  function resize() {
+    if (!renderer) return;
+    const w = Math.max(1, host.clientWidth), h = Math.max(1, host.clientHeight);
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+
+  function loadRobot() {
+    return new Promise((ok, fail) => {
+      const manager = new T.LoadingManager();
+      const loader = new U(manager);
+      let robot = null;
+      manager.onLoad = () => robot && ok(robot);
+      manager.onError = (url) => fail(new Error("could not load " + url.split("/").pop()));
+      loader.load(URDF_URL, (r) => { robot = r; }, null, fail);
+    });
+  }
+
+  // (re)build the scene for these arm ids, side by side in that order
+  async function setArms(ids) {
+    await ready;
+    const key = ids.join(",");
+    if (key === order.join(",")) return;
+    order = ids.slice();
+    for (const id of ids) {
+      if (arms[id]) continue;
+      const group = new T.Group();
+      group.rotation.x = -Math.PI / 2;  // URDF is z-up, three.js is y-up
+      const label = document.createElement("div");
+      label.className = "label3d";
+      label.textContent = id;
+      labels.appendChild(label);
+      arms[id] = { id, group, robot: null, cur: null, goal: null, grip: 0, gripGoal: 0, status: "none", label, mats: [] };
+      scene.add(group);
+      loadRobot().then((robot) => {
+        robot.rotation.set(Math.PI / 2, 0, Math.PI, "ZYX");  // the SDK's ROOT_RPY
+        for (const j of Object.values(robot.joints)) j.ignoreLimits = true;  // the motors' range, not the CAD's
+        robot.traverse((o) => {
+          if (o.isMesh) { o.material = new T.MeshStandardMaterial({ color: COLORS.off, metalness: 0.15, roughness: 0.55 });
+                          arms[id].mats.push(o.material); }
+        });
+        arms[id].robot = robot;
+        group.add(robot);
+        paint(arms[id]);
+      }).catch((e) => { label.textContent = `${id}: ${e.message}`; });
+    }
+    for (const [i, id] of order.entries()) arms[id].group.position.x = (i - (order.length - 1) / 2) * SPACING;
+    for (const id of Object.keys(arms)) { arms[id].group.visible = order.includes(id); arms[id].label.hidden = !order.includes(id); }
+  }
+
+  function statusOf(s) {
+    if (!s || s.connected === false || s.offline) return "none";
+    return s.state === "FAULT" ? "fault" : s.on ? "on" : "off";
+  }
+  function paint(arm) {
+    const c = COLORS[arm.status] ?? COLORS.off;
+    for (const m of arm.mats) { m.color.setHex(c); m.emissive.setHex(arm === arms[selected] ? 0x18305a : 0x000000); }
+    const word = { on: "on", off: "off", fault: "FAULT", none: "not connected" }[arm.status];
+    arm.label.textContent = `${arm.id} · ${word}`;
+    arm.label.classList.toggle("sel", arm === arms[selected]);
+  }
+
+  // feed one arm's latest state (joints_deg in motor degrees)
+  function update(id, s) {
+    const arm = arms[id];
+    if (!arm) return;
+    const status = statusOf(s);
+    if (status !== arm.status) { arm.status = status; paint(arm); }
+    const q = s && s.joints_deg;
+    if (!q || !q.slice(0, 6).every(Number.isFinite)) return;
+    arm.goal = q.slice(0, 6).map((d, i) => SIGN[i] * d * Math.PI / 180);
+    if (Number.isFinite(q[6])) arm.gripGoal = Math.min(1, Math.max(0, q[6] / GRIP_OPEN_DEG)) * GRIP_TRAVEL;
+    if (!arm.cur) { arm.cur = arm.goal.slice(); arm.grip = arm.gripGoal; }
+  }
+  function step(arm, a) {
+    if (!arm || !arm.robot || !arm.goal) return;
+    for (let i = 0; i < 6; i++) {
+      arm.cur[i] += (arm.goal[i] - arm.cur[i]) * a;
+      arm.robot.setJointValue(JOINTS[i], arm.cur[i]);
+    }
+    arm.grip += (arm.gripGoal - arm.grip) * a;
+    arm.robot.setJointValue("gripper_left_joint", arm.grip);
+    arm.robot.setJointValue("gripper_right_joint", arm.grip);
+  }
+  function select(id) {
+    selected = id;
+    for (const arm of Object.values(arms)) paint(arm);
+  }
+  function placeLabels() {
+    const v = new T.Vector3();
+    for (const id of order) {
+      const arm = arms[id];
+      arm.group.getWorldPosition(v);
+      v.y += 0.02; v.z += 0.22;
+      v.project(camera);
+      arm.label.style.left = ((v.x + 1) / 2 * host.clientWidth) + "px";
+      arm.label.style.top = ((1 - v.y) / 2 * host.clientHeight) + "px";
+    }
+  }
+  // a live video track of this view (to share as the team "camera")
+  function stream(fps = 30) { return renderer.domElement.captureStream(fps); }
+
+  return { mount, setArms, update, select, stream, get ready() { return ready; } };
+})();
+
 // ---------- real-time teleop: on-screen joysticks + held keys (same block in index.html and remote.html) ----------
 // Every 100 ms the joystick deflection / held keys become small relative steps for several joints at
 // once ({cmd:"move", v:{joint: deg}}). The server keeps targets at most 4° ahead of the real arm, and

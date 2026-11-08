@@ -152,7 +152,12 @@ python web_app.py --arms left=COM9,right=candle:0
 
 The browser opens at **http://127.0.0.1:8765** (also http://localhost:8765).
 
-1. **Start camera** and allow access. With several cameras, choose one in the dropdown.
+1. **Camera / 3D view**: **Start camera** and allow access (several cameras: pick one), or switch to
+   **3D view**: the arm's real CAD model (the SDK's URDF) moving with the live joint angles of every
+   arm, colored by state (grey off, light on, red fault). Drag to orbit, scroll to zoom. It's the
+   default with `--sim`, so you can test everything without hardware. **Share view with team**
+   sends whichever one is showing (keep that tab visible while sharing the 3D view). Needs internet
+   (three.js and the model load from jsDelivr / esm.sh). The gripper jaws are an uncalibrated preview.
 2. Pick the arm in the **Arm** dropdown, or switch with `Q` / `E`.
 3. **Power on**, which asks you to confirm. The arm holds where it is.
 4. Move in real time with the **3 on-screen joysticks** (mouse or touch; let go and the arm stops)
@@ -221,7 +226,7 @@ bash setup.sh                        # Windows: powershell -ExecutionPolicy Bypa
 # put the team's LIVEKIT_* values in .env
 ./run.sh remote.py                   # Windows: .\run.ps1 remote.py   ->  opens http://127.0.0.1:8770
 ```
-Type your name and **Join**, and you'll see the arm camera. Press **Take control** to drive. Same
+Type your name and **Join**, and you'll see the arm camera, or the **3D view** drawn from the arms' live data (no camera needed). Press **Take control** to drive. Same
 controls as the local page: joysticks, the same held keys, arm dropdown or `Q`/`E`.
 
 **Rules (enforced by the arm laptop):**
