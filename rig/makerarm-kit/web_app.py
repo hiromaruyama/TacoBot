@@ -24,6 +24,7 @@ import json
 import math
 import os
 import pathlib
+import sys
 import time
 import webbrowser
 from types import SimpleNamespace
@@ -88,6 +89,12 @@ def adapter_present(port: str | None, present: list[str]) -> bool | None:
         return None  # auto-detect: unknown, just try
     if is_candle_port(port):
         return f"candle:{candle_index(port)}" in present
+    if port.startswith("can") or port.startswith("socketcan:"):
+        # Linux SocketCAN (can0, socketcan:can1): a network interface, not a USB serial port
+        channel = port.split(":", 1)[1] if ":" in port else port
+        if sys.platform.startswith("linux"):
+            return os.path.exists(f"/sys/class/net/{channel}")
+        return None  # can't tell here: just try
     # macOS lists each adapter once, as /dev/cu.*; accept its /dev/tty.* twin in .env too
     norm = lambda x: x.lower().replace("/dev/tty.", "/dev/cu.")  # noqa: E731
     return norm(port) in (norm(x) for x in present)
