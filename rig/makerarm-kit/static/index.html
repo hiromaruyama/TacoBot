@@ -982,9 +982,13 @@ function renderState() {
   if (!s) return;
   const on = !!s.on, fault = s.state === "FAULT", offline = !!s.offline;
   const notConnected = s.connected === false;
-  $("btnConnect").hidden = !notConnected;
+  // Connect when it isn't connected; Reconnect (close the adapter completely, open it again) while the
+  // motors are off: clears "Access denied", a stuck adapter or an arm that stopped answering
+  $("btnConnect").hidden = on || fault;
   $("btnConnect").disabled = !!s.connecting;
-  $("btnConnect").textContent = s.connecting ? "Connecting…" : "Connect";
+  $("btnConnect").textContent = s.connecting ? "Connecting…" : notConnected ? "Connect" : "Reconnect";
+  $("btnConnect").title = notConnected ? "Try to connect this arm now"
+    : "Close this arm's adapter and open it again (motors stay off)";
   const p = $("power");
   p.textContent = notConnected ? (s.connecting ? "Connecting…" : "Not connected") : offline ? "Offline" : fault ? "FAULT" : on ? "On" : "Off";
   p.className = "pill " + (fault || offline ? "fault" : on ? "on" : "off");
@@ -1043,7 +1047,12 @@ $("btnQuesadilla").onclick = () => {
   const w = window.open("/quesadilla", "quesadilla", "width=1280,height=900");
   if (w) w.focus(); else location.href = "/quesadilla";  // popup blocked: open it here
 };
-$("btnConnect").onclick = () => { $("btnConnect").disabled = true; showMsg(`Connecting the ${armId} arm…`); send({ cmd: "connect" }); };
+$("btnConnect").onclick = () => {
+  const re = $("btnConnect").textContent === "Reconnect";
+  $("btnConnect").disabled = true;
+  showMsg(re ? `Reconnecting the ${armId} arm (closing its adapter, opening it again)…` : `Connecting the ${armId} arm…`);
+  send({ cmd: re ? "reconnect" : "connect" });
+};
 function renderAdapters(list) {
   if (info.sim) { $("adapters").textContent = ""; return; }
   $("adapters").textContent = list.length ? "USB: " + list.join(", ") : "USB: no adapter plugged in";

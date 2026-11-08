@@ -36,7 +36,7 @@ from aiohttp import web
 from arm_server import ArmBridge
 from armkit import (WEB_SPEED_DEG_S, JOINT_HELP, MAX_STEP_DEG, _config, is_on, load_env, open_arm,
                     required_env, safe_range_deg, safe_shutdown, usb_serial_ports)
-from candle_backend import candle_index, is_candle_port, list_candle_devices
+from candle_backend import candle_index, is_candle_port, list_candle_devices, release_usb
 from sim_world import DEMO, World
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -209,7 +209,11 @@ class Hub:
         try:
             arm = await asyncio.to_thread(open_connected, slot.port, self.sim, self.speed)
         except (Exception, SystemExit) as exc:  # SystemExit: port auto-detection explains itself that way
+            await asyncio.to_thread(release_usb)  # free what the failed attempt left open (WinUSB: one handle)
             err = str(exc) or type(exc).__name__
+            if "Errno 13" in err or "Access denied" in err or "could not open port" in err.lower():
+                err += (" (the adapter is held by another program, or by an earlier attempt: press Reconnect; "
+                        "if it stays, close other arm programs or unplug/replug that USB cable)")
             if not auto or err != slot.error:
                 print(f"[web] arm '{slot.id}' not connected ({slot.port}): {err}")
             slot.error = err
@@ -233,6 +237,17 @@ class Hub:
         except Exception:  # noqa: BLE001
             pass
         bridge.pool.shutdown(wait=False)
+
+    async def reconnect(self, slot: ArmSlot) -> str:
+        """Close the arm's adapter completely and open it again (the page's Reconnect). Motors must be off."""
+        if slot.bridge is not None:
+            if is_on(slot.bridge.arm):
+                return f"the {slot.id} arm's motors are on: Park it first, then Reconnect"
+            async with slot.lock:
+                await self.drop(slot, "reconnecting")
+        await asyncio.to_thread(release_usb)
+        slot.next_try = 0
+        return await self.connect(slot)
 
     async def watch(self) -> None:
         """Live connection check: notices adapters plugged in or out and (re)connects the arms."""
@@ -311,10 +326,10 @@ class Hub:
                 slot.busy_stop.set()
                 return f"stopping the {slot.busy}: it finishes the current move, then parks"
             return f"the {slot.busy} is driving the {slot.id} arm: STOP it there (or press Hold/Park)"
-        if cmd == "connect":
+        if cmd in ("connect", "reconnect"):
             if origin != LOCAL:
                 return "connecting arms is done on the arm laptop"
-            return await self.connect(slot)
+            return await (self.reconnect(slot) if cmd == "reconnect" else self.connect(slot))
         if slot.bridge is None:
             return f"arm '{slot.id}' is not connected: {slot.error}"
         bridge = slot.bridge
