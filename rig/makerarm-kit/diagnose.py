@@ -34,7 +34,24 @@ def main() -> None:
     from maker_arm import protocol as p
 
     arm = open_arm(port=a.port, sim=a.sim)
-    arm.connect()  # never enables torque
+    try:
+        arm.connect()  # never enables torque
+    except Exception as exc:  # noqa: BLE001
+        text = str(exc)
+        print(f"\n{a.port}: {text}\n")
+        if "online: none" in text:
+            print("=> The adapter opened, but NO motor answers on this CAN bus. Not a software problem:\n"
+                  "   1. This arm's power supply on (LED lit) and its e-stop released (twist it)?\n"
+                  "   2. CAN cable from the adapter to the base motor (J1) plugged in at both ends?\n"
+                  "   3. Is this adapter really wired to this arm? Follow the cable.\n"
+                  "   4. Swap test: plug this arm's CAN cable into the OTHER (working) adapter and run\n"
+                  "      diagnose on that port. Arm answers there -> this adapter/cable is the problem;\n"
+                  "      still silent -> the arm (power, e-stop, its own wiring).")
+        elif "online:" in text:
+            print("=> Some motors answer and some don't: a loose cable between motors, or a motor without power.")
+        elif "Errno 13" in text or "Access denied" in text or "could not open" in text.lower():
+            print("=> Another program holds this adapter: close web_app / Dream-1 / other tools, or unplug and replug it.")
+        raise SystemExit(1)
     try:
         arm.refresh(wait=True)
         time.sleep(0.1)
