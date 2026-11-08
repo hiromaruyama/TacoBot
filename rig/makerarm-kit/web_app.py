@@ -35,12 +35,13 @@ from arm_server import ArmBridge
 from armkit import (WEB_SPEED_DEG_S, JOINT_HELP, MAX_STEP_DEG, _config, is_on, load_env, open_arm,
                     required_env, safe_range_deg, safe_shutdown, usb_serial_ports)
 from candle_backend import candle_index, is_candle_port, list_candle_devices
+from sim_world import DEMO, World
 
 HERE = pathlib.Path(__file__).resolve().parent
 STATIC = HERE / "static"
 OFF_MSG = "Motors off. Press Power on when the area is clear."
 LOCAL = "local"                    # origin of commands from this laptop's page
-REMOTE_ALLOWED = {"jog", "move", "hold", "park"}
+REMOTE_ALLOWED = {"jog", "move", "goto", "hold", "park", "reset_world"}
 ANYONE_ALLOWED = {"hold", "park"}  # stop actions: any remote viewer may use them
 CONTROL_IDLE_S = 60.0              # a controller that sends no commands loses control after this long
 HEARTBEAT_S = 5.0                  # ...and one whose page stops sending heartbeats (tab closed, Wi-Fi gone)
@@ -61,6 +62,7 @@ class ArmSlot:
     error: str | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     connecting: bool = False
+    world: World = field(default_factory=World)  # virtual tortilla + plate for pick & place practice
     present: bool | None = None     # adapter seen on USB by the live watcher (None = unknown / sim)
     next_try: float = 0.0
 
@@ -180,7 +182,7 @@ class Hub:
                                     "lo": round(lo, 1), "hi": round(hi, 1)})
 
     def info(self) -> dict:
-        return {"arms": [s.info() for s in self.slots], "adapters": self.adapters, "joints": self.joints, "max_step": MAX_STEP_DEG,
+        return {"arms": [s.info() for s in self.slots], "adapters": self.adapters, "joints": self.joints, "max_step": MAX_STEP_DEG, "demo": DEMO,
                 "speed": self.speed,
                 "sim": self.sim, "livekit": self.livekit_on}
 
@@ -268,7 +270,9 @@ class Hub:
         if slot.error:
             print(f"[web] arm '{slot.id}' is answering again")
             slot.error = None
-        return await slot.bridge.run(slot.bridge.snapshot)
+        snap = await slot.bridge.run(slot.bridge.snapshot)
+        snap["world"] = slot.world.update(snap["joints_deg"])
+        return snap
 
     async def run(self, msg: dict, origin: str) -> str:
         """Execute one command from the local page (origin=LOCAL) or a remote identity."""
@@ -290,6 +294,8 @@ class Hub:
         slot = self.by_id.get(str(msg.get("arm") or ""))
         if slot is None:
             return f"unknown arm {msg.get('arm')!r}"
+        if cmd == "reset_world":
+            return slot.world.reset()
         if cmd == "connect":
             if origin != LOCAL:
                 return "connecting arms is done on the arm laptop"
@@ -312,6 +318,11 @@ class Hub:
                     if not math.isfinite(deg):
                         raise ValueError("deg")
                     result = await bridge.run(bridge.jog, joint, deg)
+                elif cmd == "goto":  # step playback: absolute setpoints {"v": {"1": deg, ...}}
+                    targets = {int(k): float(v) for k, v in dict(msg.get("v") or {}).items()}
+                    if not 0 < len(targets) <= 7 or not all(math.isfinite(v) for v in targets.values()):
+                        raise ValueError("v")
+                    result = await bridge.run(bridge.goto, targets)
                 elif cmd == "move":  # joysticks / held keys: {"v": {"1": deg, "2": deg, ...}}
                     deltas = {int(k): float(v) for k, v in dict(msg.get("v") or {}).items()}
                     if not 0 < len(deltas) <= 7 or not all(math.isfinite(v) for v in deltas.values()):
@@ -325,7 +336,7 @@ class Hub:
                 result = f"error: {exc}"
         who = "" if origin == LOCAL else f" ({origin})"
         bridge.last_msg = result + who
-        if cmd != "move" and (cmd != "jog" or origin != LOCAL):  # moves arrive 10x/s: don't log them
+        if cmd not in ("move", "goto") and (cmd != "jog" or origin != LOCAL):  # moves arrive 10x/s: don't log them
             print(f"[web] {slot.id} {cmd}{who}: {result}")
         return result
 

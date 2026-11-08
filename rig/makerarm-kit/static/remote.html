@@ -76,6 +76,21 @@
              padding: 2px 8px; border-radius: 6px; white-space: nowrap; pointer-events: none; }
   .label3d.sel { background: var(--accent); }
   .label3d.hint3d { left: 8px; bottom: 8px; transform: none; color: #bbb; font-size: 11px; background: rgba(0,0,0,.4); }
+  .pipframe { position: absolute; border: 2px solid var(--accent); border-radius: 6px; pointer-events: none; }
+  .pipframe span { position: absolute; left: 6px; top: 4px; font-size: 11px; color: #fff; background: rgba(0,0,0,.5);
+                   padding: 0 6px; border-radius: 4px; }
+  .pipbtn { position: absolute; right: 8px; top: 8px; font-size: 12px; padding: 4px 9px; opacity: .9; }
+  .step { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto auto auto; gap: 8px; align-items: center;
+          padding: 6px 4px; border-radius: 8px; }
+  .step + .step { border-top: 1px solid var(--line); }
+  .step.cur { background: var(--accent-soft); }
+  .step .stname { width: 100%; border: 1px solid transparent; background: transparent; padding: 2px 4px; font-weight: 600;
+                  color: var(--text); font: inherit; }
+  .step .stname:focus { border-color: var(--line); background: var(--panel); }
+  .step .stq { font-size: 11px; padding-left: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .step button { padding: 4px 9px; }
+  #stList { max-height: 340px; overflow: auto; margin-top: 8px; }
+  .msg.ok { background: var(--ok-soft); color: var(--ok); }
   .sticks { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
   .sticks.off .stick { opacity: .45; }
   .stickbox { text-align: center; min-width: 0; }
@@ -150,6 +165,31 @@
       hold <kbd>Shift</kbd> for precise · <kbd>Space</kbd> stop · <kbd>Q</kbd>/<kbd>E</kbd> switch arm.
       Drag a joystick (touch works too); let go and the arm stops. Moving needs control; Hold and Park work for everyone.
     </div>
+  </section>
+
+  <section class="card" id="stepsCard">
+    <h2>Steps · pick &amp; place practice</h2>
+    <div id="worldMsg" class="msg" style="margin-top:0">Virtual tortilla: shown once this arm is connected.</div>
+    <div class="row">
+      <button id="stAdd">+ Add current pose</button>
+      <button id="stPlay" class="primary">▶ Play</button>
+      <button id="stStop">■ Stop</button>
+      <label><input type="checkbox" id="stLoop"> Loop</label>
+      <span class="spacer"></span>
+      <button id="stReset" title="Put the virtual tortilla back on the table">Reset tortilla</button>
+    </div>
+    <div id="stList"></div>
+    <div class="row">
+      <button id="stDemo">Load tortilla demo</button>
+      <button id="stSave">Save…</button>
+      <button id="stLoad">Load…</button>
+      <input type="file" id="stFile" accept=".json,application/json" hidden>
+      <span class="spacer"></span>
+      <button id="stClear" class="danger">Clear</button>
+    </div>
+    <div id="stMsg" class="msg"></div>
+    <div class="hint">Playback uses the Speed slider. Joysticks, keys or <kbd>Space</kbd> stop it. Grasp the tortilla by
+      closing the gripper with the grasp point (the dot between the jaws) on its outer edge; open to let go.</div>
   </section>
 </main>
 
@@ -287,6 +327,7 @@ function onData(payload, participant, kind, topic) {
   if (!built) build();
   render();
   feed3d();
+  Steps.renderWorld(st());
 }
 function staleCheck() {
   if (!latest || Date.now() - latestAt > 3000) {
@@ -335,11 +376,16 @@ function build() {
       ? (latest && latest.controller ? `${latest.controller} has control.` : "Press Take control first.")
       : `The ${armId} arm is off. It's powered on from the arm laptop.`),
   });
+  Steps.init({
+    state: st, send,
+    canMove: () => !!(iHaveControl() && st() && st().on),
+    blockedText: () => !iHaveControl() ? "press Take control first" : `the ${armId} arm is off (powered on at the arm laptop)`,
+  }, info.demo);
   chooseArm(armId);
   built = true;
 }
 function chooseArm(id) {
-  if (built && armId && id !== armId) Teleop.stop();  // the old arm holds before we switch
+  if (built && armId && id !== armId) { Teleop.stop(); Steps.stop("Stopped: switched arm."); }  // old arm holds
   armId = id;
   Arm3D.select(id); $("armSelect").value = id;
   $("moveTitle").textContent = `Movement · ${id} arm`;
@@ -370,6 +416,9 @@ const Arm3D = (() => {
   const SPACING = 0.6;               // metres between the arms in the view
   const COLORS = { on: 0xc9d3e3, off: 0x8d8c88, fault: 0xd9645f, none: 0x5b5a57 };
   let T = null, U = null, renderer, scene, camera, controls, host, labels, ready = null, selected = null;
+  let pipCam = null, pipOn = true, pipFrame = null;
+  // gripper camera: mounted on the wrist (link_007 frame), looking down the jaws at the grasp point
+  let PIP_EYE = [0.10, 0, -0.06], PIP_LOOK = [0, 0, -0.2];
   const arms = {};                   // id -> {group, robot, cur, goal, status, label, mats}
   let order = [];
 
@@ -397,11 +446,23 @@ const Arm3D = (() => {
     hint.className = "label3d hint3d";
     hint.textContent = "3D from live joint data · drag to orbit · scroll to zoom";
     host.appendChild(hint);
+    try { pipOn = localStorage.getItem("pip") !== "0"; } catch (e) {}
+    pipFrame = document.createElement("div");
+    pipFrame.className = "pipframe";
+    pipFrame.innerHTML = "<span>gripper cam</span>";
+    host.appendChild(pipFrame);
+    const pipBtn = document.createElement("button");
+    pipBtn.className = "pipbtn";
+    const pipText = () => { pipBtn.textContent = pipOn ? "Hide gripper cam" : "Gripper cam"; pipFrame.hidden = !pipOn; };
+    pipBtn.onclick = () => { pipOn = !pipOn; try { localStorage.setItem("pip", pipOn ? "1" : "0"); } catch (e) {} pipText(); };
+    host.appendChild(pipBtn);
+    pipText();
 
     scene = new T.Scene();
     scene.background = new T.Color(0x16181c);
     camera = new T.PerspectiveCamera(40, 16 / 9, 0.01, 20);
     camera.position.set(0.0, 0.75, 1.45);
+    pipCam = new T.PerspectiveCamera(70, 4 / 3, 0.005, 5);
     controls = new orbit.OrbitControls(camera, renderer.domElement);
     controls.target.set(0, 0.18, 0);
     controls.enableDamping = true;
@@ -422,6 +483,7 @@ const Arm3D = (() => {
       for (const id of order) step(arms[id], a);
       controls.update();
       renderer.render(scene, camera);
+      if (pipOn && arms[selected] && arms[selected].robot) renderPip(arms[selected]);
       placeLabels();
     });
   }
@@ -459,7 +521,8 @@ const Arm3D = (() => {
       label.className = "label3d";
       label.textContent = id;
       labels.appendChild(label);
-      arms[id] = { id, group, robot: null, cur: null, goal: null, grip: 0, gripGoal: 0, status: "none", label, mats: [] };
+      arms[id] = { id, group, robot: null, cur: null, goal: null, grip: 0, gripGoal: 0, status: "none", label, mats: [],
+                   world: makeWorld(group), marker: null };
       scene.add(group);
       loadRobot().then((robot) => {
         robot.rotation.set(Math.PI / 2, 0, Math.PI, "ZYX");  // the SDK's ROOT_RPY
@@ -468,6 +531,11 @@ const Arm3D = (() => {
           if (o.isMesh) { o.material = new T.MeshStandardMaterial({ color: COLORS.off, metalness: 0.15, roughness: 0.55 });
                           arms[id].mats.push(o.material); }
         });
+        const gc = robot.links && robot.links.grasp_center;  // the URDF's grasp point, between the jaws
+        if (gc) {
+          arms[id].marker = new T.Mesh(new T.SphereGeometry(0.007, 16, 12), new T.MeshBasicMaterial({ color: 0xffffff }));
+          gc.add(arms[id].marker);
+        }
         arms[id].robot = robot;
         group.add(robot);
         paint(arms[id]);
@@ -495,6 +563,7 @@ const Arm3D = (() => {
     if (!arm) return;
     const status = statusOf(s);
     if (status !== arm.status) { arm.status = status; paint(arm); }
+    arm.world.server = (s && s.world) || null;
     const q = s && s.joints_deg;
     if (!q || !q.slice(0, 6).every(Number.isFinite)) return;
     arm.goal = q.slice(0, 6).map((d, i) => SIGN[i] * d * Math.PI / 180);
@@ -510,6 +579,68 @@ const Arm3D = (() => {
     arm.grip += (arm.gripGoal - arm.grip) * a;
     arm.robot.setJointValue("gripper_left_joint", arm.grip);
     arm.robot.setJointValue("gripper_right_joint", arm.grip);
+    applyWorld(arm);
+  }
+
+  function makeWorld(group) {
+    const tort = new T.Group(), plate = new T.Group();
+    const tm = new T.Mesh(new T.CylinderGeometry(1, 1, 1, 48), new T.MeshStandardMaterial({ color: 0xe6c27f, roughness: 0.95 }));
+    tm.rotation.x = Math.PI / 2;  // cylinder axis y -> z (the world here is z-up)
+    tort.add(tm);
+    const pm = new T.Mesh(new T.CylinderGeometry(1, 0.8, 1, 48), new T.MeshStandardMaterial({ color: 0xf0efe9, roughness: 0.35 }));
+    pm.rotation.x = Math.PI / 2;
+    plate.add(pm);
+    tort.matrixAutoUpdate = false;
+    tort.visible = plate.visible = false;
+    group.add(tort, plate);
+    return { tort, tm, plate, pm, server: null, rel: null };
+  }
+  function linkInGroup(arm, link) {
+    arm.group.updateMatrixWorld(true);
+    return new T.Matrix4().copy(arm.group.matrixWorld).invert().multiply(link.matrixWorld);
+  }
+  // tortilla + plate from the server's world (the server decides grasp / release)
+  function applyWorld(arm) {
+    const w = arm.world, sv = w.server;
+    w.tort.visible = w.plate.visible = !!sv;
+    if (!sv) return;
+    const t = sv.tortilla, p = sv.plate, r = t.rot;
+    w.pm.scale.set(p.r, p.h, p.r);
+    w.plate.position.set(p.pos[0], p.pos[1], p.h / 2);
+    w.tm.scale.set(t.r, t.t, t.r);
+    const server = new T.Matrix4().set(r[0], r[1], r[2], t.pos[0], r[3], r[4], r[5], t.pos[1], r[6], r[7], r[8], t.pos[2], 0, 0, 0, 1);
+    const link = arm.robot.links && arm.robot.links.link_007;
+    if (t.held && link) {  // ride with the (smoothed) gripper instead of the 5 Hz server pose
+      const g = linkInGroup(arm, link);
+      if (!w.rel) w.rel = g.clone().invert().multiply(server);
+      w.tort.matrix.copy(g.multiply(w.rel));
+    } else {
+      w.rel = null;
+      w.tort.matrix.copy(server);
+    }
+    w.tort.matrixWorldNeedsUpdate = true;
+    if (arm.marker) arm.marker.material.color.setHex(t.held ? 0x3ddc84 : (sv.gap_mm != null && sv.gap_mm < 12) ? 0xffb020 : 0xffffff);
+  }
+
+  function renderPip(arm) {
+    const link = arm.robot.links && arm.robot.links.link_007;
+    if (!link) return;
+    link.updateMatrixWorld(true);
+    const eye = link.localToWorld(new T.Vector3(...PIP_EYE)), at = link.localToWorld(new T.Vector3(...PIP_LOOK));
+    pipCam.up.copy(new T.Vector3(1, 0, 0).transformDirection(link.matrixWorld));
+    pipCam.position.copy(eye);
+    pipCam.lookAt(at);
+    const w = host.clientWidth, h = host.clientHeight, m = 8;
+    const pw = Math.round(Math.max(120, w * 0.34)), ph = Math.round(pw * 0.75);
+    pipCam.aspect = pw / ph;
+    pipCam.updateProjectionMatrix();
+    renderer.setScissorTest(true);
+    renderer.setViewport(w - pw - m, m, pw, ph);  // GL origin is bottom-left
+    renderer.setScissor(w - pw - m, m, pw, ph);
+    renderer.render(scene, pipCam);
+    renderer.setScissorTest(false);
+    renderer.setViewport(0, 0, w, h);
+    Object.assign(pipFrame.style, { width: pw + "px", height: ph + "px", right: m + "px", bottom: m + "px" });
   }
   function select(id) {
     selected = id;
@@ -529,7 +660,160 @@ const Arm3D = (() => {
   // a live video track of this view (to share as the team "camera")
   function stream(fps = 30) { return renderer.domElement.captureStream(fps); }
 
-  return { mount, setArms, update, select, stream, get ready() { return ready; } };
+  // tweak the gripper camera from the console: Arm3D.pip([x, y, z], [x, y, z]) in the wrist frame, metres
+  function pip(eye, look) { if (eye) PIP_EYE = eye; if (look) PIP_LOOK = look; return { eye: PIP_EYE, look: PIP_LOOK }; }
+  return { mount, setArms, update, select, stream, pip, get ready() { return ready; } };
+})();
+
+// ---------- steps: record poses and play them back (same block in index.html and remote.html) ----------
+// Playback streams absolute setpoints ({cmd:"goto"}) 10x/s along a straight line in joint space, all
+// joints arriving together, at the speed slider's speed. The server clamps every setpoint into the safe
+// range and to 8° from the real position, like the joysticks. Touching a joystick/key, Space, switching
+// arm or losing control stops it and the arm holds.
+const Steps = (() => {
+  const TICK_MS = 100;
+  let steps = [], hooks = null, playing = false, cur = -1, demo = [];
+  const el = (id) => document.getElementById(id);
+  const valid = (s) => s && Array.isArray(s.q) && s.q.length === 7 && s.q.every(Number.isFinite);
+  const esc = (t) => String(t).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const fmt = (q) => q.map((v, i) => (i === 6 ? "grip " : `J${i + 1} `) + Math.round(v)).join(" · ");
+  function save() { try { localStorage.setItem("steps", JSON.stringify(steps)); } catch (e) {} }
+  function load() {
+    try { const s = JSON.parse(localStorage.getItem("steps") || "[]"); if (Array.isArray(s)) steps = s.filter(valid); } catch (e) {}
+  }
+  function msg(text, bad = false) { const m = el("stMsg"); m.textContent = text; m.classList.toggle("fault", bad); }
+
+  function render() {
+    el("stList").innerHTML = steps.length ? steps.map((s, i) => `
+      <div class="step ${i === cur ? "cur" : ""}" data-i="${i}">
+        <span class="jn">${i + 1}</span>
+        <div style="min-width:0"><input class="stname" value="${esc(s.name || "Step " + (i + 1))}" maxlength="40">
+          <div class="muted stq">${fmt(s.q)}</div></div>
+        <button data-a="go" title="Move to this step only">Go</button>
+        <button data-a="up" title="Move up" ${i ? "" : "disabled"}>↑</button>
+        <button data-a="del" title="Delete">✕</button>
+      </div>`).join("")
+      : `<div class="muted" style="padding:8px 4px">No steps yet: move the arm and press <b>Add current pose</b>, or load the tortilla demo.</div>`;
+    el("stList").querySelectorAll(".step").forEach(row => {
+      const i = +row.dataset.i;
+      row.querySelector(".stname").onchange = (e) => { steps[i].name = e.target.value; save(); };
+      row.querySelectorAll("button").forEach(b => b.onclick = () => {
+        if (b.dataset.a === "go") play(i, true);
+        else if (playing) msg("Stop the sequence first.");
+        else if (b.dataset.a === "up") { [steps[i - 1], steps[i]] = [steps[i], steps[i - 1]]; save(); render(); }
+        else { steps.splice(i, 1); save(); render(); }
+      });
+    });
+    el("stPlay").disabled = !steps.length || playing;
+    el("stStop").disabled = !playing;
+  }
+
+  function add() {
+    const s = hooks.state(), q = s && s.joints_deg;
+    if (!q || q.length < 7 || !q.slice(0, 7).every(Number.isFinite)) { msg("No joint reading for this arm yet.", true); return; }
+    steps.push({ name: "Step " + (steps.length + 1), q: q.slice(0, 7).map(v => Math.round(v * 10) / 10) });
+    save(); render();
+    msg(`Added step ${steps.length}.`);
+  }
+
+  async function play(from = 0, single = false) {
+    if (playing) return;
+    if (!hooks.canMove()) { msg(hooks.blockedText(), true); return; }
+    playing = true; render();
+    let i = from;
+    try {
+      while (playing) {
+        cur = i; render();
+        msg(`Step ${i + 1}/${steps.length}: ${steps[i].name}`);
+        await runStep(steps[i].q);
+        if (!playing || single) break;
+        i++;
+        if (i >= steps.length) { if (el("stLoop").checked) i = 0; else break; }
+      }
+      if (playing) msg(single ? `Reached step ${i + 1}.` : "Sequence done.");
+    } catch (e) {
+      msg("Stopped: " + e.message, true);
+      hooks.send({ cmd: "hold" });
+    }
+    playing = false; cur = -1; render();
+  }
+  function stop(why) {
+    if (!playing) return;
+    playing = false;
+    hooks.send({ cmd: "hold" });
+    msg(why || "Stopped. The arm holds where it is.");
+  }
+  async function runStep(target) {
+    const s0 = hooks.state();
+    const base = s0 && (s0.targets_deg && s0.targets_deg.every(Number.isFinite) ? s0.targets_deg : s0.joints_deg);
+    if (!base) throw new Error("no joint reading");
+    const start = base.slice(0, 7);
+    const dist = Math.max(...target.map((t, i) => Math.abs(t - start[i])));
+    const dur = dist / Math.max(1, Teleop.speedDegS()) * 1000;  // straight line, all joints together
+    const t0 = performance.now();
+    let doneAt = null;
+    while (playing) {
+      if (!hooks.canMove()) throw new Error(hooks.blockedText());
+      if (Teleop.active()) { stop("Stopped: joystick/keys took over."); return; }
+      const f = dur ? Math.min(1, (performance.now() - t0) / dur) : 1;
+      const v = {};
+      target.forEach((t, i) => { v[i + 1] = Math.round((start[i] + (t - start[i]) * f) * 100) / 100; });
+      hooks.send({ cmd: "goto", v });
+      if (f >= 1) {
+        const q = hooks.state().joints_deg;
+        const close = target.every((t, i) => Math.abs(q[i] - t) < (i === 6 ? 4 : 2));
+        doneAt = doneAt || performance.now();
+        if (close || performance.now() - doneAt > 4000) { await sleep(300); return; }  // 4 s: a limit stopped it
+      }
+      await sleep(TICK_MS);
+    }
+  }
+
+  function download() {
+    const blob = new Blob([JSON.stringify(steps, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = "makerarm-steps.json"; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+  function upload(file) {
+    file.text().then(t => {
+      const s = JSON.parse(t);
+      if (!Array.isArray(s) || !s.every(valid)) throw new Error("not a steps file (a list of {name, q:[7 numbers]})");
+      steps = s; save(); render(); msg(`Loaded ${s.length} steps.`);
+    }).catch(e => msg("Could not load: " + e.message, true));
+  }
+
+  function init(h, demoSteps) {
+    hooks = h; demo = demoSteps || [];
+    load();
+    el("stAdd").onclick = add;
+    el("stPlay").onclick = () => play(0);
+    el("stStop").onclick = () => stop();
+    el("stDemo").hidden = !demo.length;
+    el("stDemo").onclick = () => {
+      if (playing) return;
+      if (steps.length && !confirm("Replace your steps with the tortilla demo?")) return;
+      steps = demo.map(s => ({ name: s.name, q: s.q.slice() })); save(); render();
+      msg("Tortilla demo loaded. Power on, press Reset tortilla, then Play.");
+    };
+    el("stSave").onclick = download;
+    el("stLoad").onclick = () => el("stFile").click();
+    el("stFile").onchange = (e) => { if (e.target.files[0]) upload(e.target.files[0]); e.target.value = ""; };
+    el("stClear").onclick = () => { if (!playing && steps.length && confirm("Delete all steps?")) { steps = []; save(); render(); } };
+    el("stReset").onclick = () => hooks.send({ cmd: "reset_world" });
+    render();
+  }
+  // the virtual world's status line for the selected arm
+  function renderWorld(s) {
+    const w = s && s.world, m = el("worldMsg");
+    if (!m) return;
+    if (!w) { m.textContent = "Virtual tortilla: shown once this arm is connected."; m.classList.remove("ok"); return; }
+    m.textContent = `Tortilla: ${w.note}` + (w.gap_mm != null ? `  ·  jaw gap ${Math.round(w.gap_mm)} mm` : "")
+      + (w.grasp ? `  ·  grasp point x ${Math.round(w.grasp[0] * 100)} y ${Math.round(w.grasp[1] * 100)} z ${Math.round(w.grasp[2] * 100)} cm` : "");
+    m.classList.toggle("ok", !!(w.tortilla.held || w.placed));
+  }
+  return { init, stop, renderWorld, get playing() { return playing; } };
 })();
 
 // ---------- real-time teleop: on-screen joysticks + held keys (same block in index.html and remote.html) ----------
@@ -704,7 +988,8 @@ const Teleop = (() => {
     releaseAll();
     if (moving && hooks) { moving = false; hooks.send({ cmd: "hold" }); }
   }
-  return { init, keydown, stop, setGripEnabled: (on) => ["tGripOpen", "tGripClose"].forEach(id => {
+  return { init, keydown, stop, speedDegS: () => maxSpeed * scale,
+           active: () => Object.keys(velocities()).length > 0, setGripEnabled: (on) => ["tGripOpen", "tGripClose"].forEach(id => {
     const b = document.getElementById(id); if (b) b.disabled = !on; }) };
 })();
 
@@ -752,7 +1037,7 @@ document.addEventListener("keydown", (e) => {
   if (Teleop.keydown(e) || e.repeat) return;
   if (e.code === "KeyQ") cycleArm(-1);
   else if (e.code === "KeyE") cycleArm(1);
-  else if (e.code === "Space") { e.preventDefault(); Teleop.stop(); send({ cmd: "hold" }); }
+  else if (e.code === "Space") { e.preventDefault(); Teleop.stop(); Steps.stop(); send({ cmd: "hold" }); }
 });
 </script>
 </body>

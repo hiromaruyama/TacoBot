@@ -164,6 +164,31 @@ class ArmBridge:
             self.targets_deg = new
         return " · ".join(msgs) or "no movement"
 
+    def goto(self, targets: dict[int, float], lead: float = MOVE_LEAD_DEG) -> str:
+        """Absolute targets (step playback). Each one is clamped into the joint's safe range and to at
+        most `lead` degrees from the measured position, so a stream of setpoints is safe to send."""
+        if not is_on(self.arm) or self.targets_deg is None:
+            return "ignored: arm is off (power it on first, next to the arm)"
+        n = self.arm.config.n_joints
+        for joint, deg in targets.items():
+            if not 1 <= joint <= n:
+                return f"ignored: joint must be 1..{n}"
+            if not math.isfinite(deg):
+                return "ignored: target must be a number"
+        now = positions_deg(self.arm)
+        new = list(self.targets_deg)
+        for joint, deg in targets.items():
+            lo, hi = safe_range_deg(self.arm, joint)
+            t = min(max(deg, lo), hi)
+            if math.isfinite(now[joint - 1]):
+                t = min(max(t, now[joint - 1] - lead), now[joint - 1] + lead)
+            new[joint - 1] = t
+        if new != self.targets_deg:
+            if not self.arm.set_joint_targets([math.radians(x) for x in new]):
+                return "the arm rejected the target"
+            self.targets_deg = new
+        return "playing steps"
+
     def snapshot(self) -> dict:
         return {
             "on": is_on(self.arm),

@@ -21,6 +21,7 @@ COM port) and one candleLight adapter (no COM port, uses gs_usb). macOS and Linu
 |---|---|
 | `web_app.py` + `static/index.html` | Arm laptop: web page at http://127.0.0.1:8765 (camera, arm dropdown, every joint). With `--livekit`, shares the arms and camera with the team |
 | `remote.py` + `static/remote.html` | **Teammates, from anywhere:** live arm camera + controls over LiveKit (no arm hardware needed) |
+| `sim_world.py` | Virtual tortilla + plate per arm and the grasp rule (forward kinematics from the SDK) |
 | `first_move.py` | Simplest test: nudge one joint a few degrees and back. Also lists ports |
 | `arm_server.py` | Runs next to an arm: joins a LiveKit room and accepts small jog commands |
 | `controller.py` | Runs anywhere: keyboard (or `--demo`) control over LiveKit |
@@ -194,6 +195,30 @@ and its motors answer (retrying every 10 s). Pick a *not connected* arm and pres
 right away. Unplugging an adapter while its motors are off frees that arm; it reconnects when plugged
 back in. The other arm keeps working meanwhile.
 
+### Steps & the virtual tortilla (pick & place practice)
+
+Each arm has a small virtual world in the 3D view: a **tortilla** (16 cm) in front of it and a
+**plate** to its right. It works in the simulator and with the real arms (a digital twin; there's no
+real tortilla involved).
+
+- **Grasp:** close the gripper with the **grasp point** (the dot between the jaws, from the SDK's URDF)
+  on the tortilla's outer 5 cm, at most 3 cm above it. The dot turns amber when the jaws are closed
+  and green while holding. **Open** the gripper to let go: it drops flat onto the table, or onto the
+  plate ("placed on the plate!"). **Reset tortilla** puts it back.
+- **Gripper cam:** the small inset is a camera mounted on the wrist, looking down the jaws, to aim
+  before closing. Hide/show it with the button on the view. It is included when you share the view.
+- **Steps card:** **+ Add current pose** records all 7 joints (the gripper too), then **▶ Play** goes
+  through them in order (or **Go** for one step), at the Speed slider's speed, all joints arriving
+  together. **Loop** repeats. Steps stay in the browser; **Save…/Load…** as JSON to share them.
+  **Load tortilla demo** loads a sequence that picks the tortilla up and puts it on the plate.
+- **Safety:** playback streams setpoints that the server clamps like the joysticks (safe range, at
+  most 8° ahead of the real arm). A joystick, a key, `Space`, switching arm or losing control stops it
+  and the arm holds. Remote teammates need control to play steps.
+
+The grasp rule is a geometric check, not physics: use it to practise reach, approach and timing.
+The gripper angle → jaw gap is the SDK's uncalibrated preview (0° closed, −96° fully open).
+Try it now: `python web_app.py --sim` → **Power on** → **Load tortilla demo** → **▶ Play**.
+
 ## 7. Team control from anywhere (LiveKit)
 
 Everyone on the team can watch the arm camera and drive the arms from their own laptop, on any
@@ -248,7 +273,7 @@ controls as the local page: joysticks, the same held keys, arm dropdown or `Q`/`
 
 Wire format (JSON over LiveKit data, room `LIVEKIT_ROOM`): `arm/state` from `arm-host` at 5 Hz
 (`arms`, `controller`, `viewers`, `info`); `arm/cmd` to `arm-host` (`take`, `release`, `ping`,
-`jog {arm, joint, deg}`, `move {arm, v: {joint: deg, ...}}` (joysticks, 10 Hz), `hold {arm}`, `park {arm}`); `arm/reply` back to the sender.
+`jog {arm, joint, deg}`, `move {arm, v: {joint: deg, ...}}` (joysticks, 10 Hz), `goto {arm, v: {joint: deg}}` (steps), `reset_world {arm}`, `hold {arm}`, `park {arm}`); `arm/reply` back to the sender.
 
 Terminal-only alternative for a single arm: `python arm_server.py` next to the arm (type `MOVE`)
 and `python controller.py` anywhere (`1`–`7`, `a`/`d`, `[`/`]` step, `h` hold, `p` park, `q` quit).
