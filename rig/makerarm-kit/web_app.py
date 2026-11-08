@@ -86,7 +86,9 @@ def adapter_present(port: str | None, present: list[str]) -> bool | None:
         return None  # auto-detect: unknown, just try
     if is_candle_port(port):
         return f"candle:{candle_index(port)}" in present
-    return port.lower() in (x.lower() for x in present)
+    # macOS lists each adapter once, as /dev/cu.*; accept its /dev/tty.* twin in .env too
+    norm = lambda x: x.lower().replace("/dev/tty.", "/dev/cu.")  # noqa: E731
+    return norm(port) in (norm(x) for x in present)
 
 
 def parse_arms(spec: str) -> list[tuple[str, str]]:
@@ -236,7 +238,10 @@ class Hub:
                             await self.drop(slot, f"adapter {slot.port} unplugged; plug it back in and it reconnects")
                     continue
                 if present is False:
-                    slot.error = f"adapter {slot.port} is not plugged in (or the USB switch points at another laptop)"
+                    seen = ", ".join(self.adapters) or "none"
+                    slot.error = (f"adapter {slot.port} is not plugged in (or the USB switch points at another "
+                                  f"laptop). Adapters seen now: {seen}. On macOS the number in /dev/cu.usbmodem… "
+                                  "changes with the USB socket: update ARM_PORTS in .env if so.")
                     continue
                 if slot.connecting:
                     continue

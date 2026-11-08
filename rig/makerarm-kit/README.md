@@ -68,8 +68,8 @@ git clone https://github.com/hiromaruyama/TacoBot.git
 cd TacoBot/rig/makerarm-kit
 bash setup.sh
 
-# 3. Try it without hardware
-./run.sh web_app.py --sim           # opens http://127.0.0.1:8765
+# 3. Try it without hardware: 3D view of two simulated arms, joysticks, keys
+./run.sh web_app.py --sim           # opens http://127.0.0.1:8765 -> Power on, then W A S D
 
 # 4. Plug in the arms' USB hub, find the ports, put them in .env
 ./run.sh first_move.py --list-ports # e.g. /dev/cu.usbmodem2101 and candle:0
@@ -77,18 +77,27 @@ open -e .env                        # ARM_PORTS=left=/dev/cu.usbmodem2101,right=
 
 # 5. Go
 ./run.sh first_move.py --read-only  # motors OFF: move an arm by hand, angles should change
-./run.sh                            # web app with the real arms
+./run.sh                            # web app with the real arms (add --livekit for the team)
 ```
 
 macOS notes:
-- **Ports:** SLCAN adapters are `/dev/cu.usbmodem…` or `/dev/cu.usbserial…`. Always use the
-  `cu.` name, not the `tty.` twin. The listing marks the likely ones with `*`.
+- **Ports:** SLCAN adapters are `/dev/cu.usbmodem…` or `/dev/cu.usbserial…`. Use the `cu.` name
+  (the `tty.` twin is accepted too). The listing marks the likely ones with `*`. The number in
+  `usbmodem2101` follows the USB socket: plug the hub into a different socket and it changes. The
+  web app's header shows the adapters it sees live (`USB: …`); update `ARM_PORTS` if it moved.
+- **Arms not connected at start** is fine: the web app starts anyway and connects each arm by
+  itself when its adapter is plugged in and the arm has power (or press **Connect**).
 - **candleLight** (`candle:0`) needs no driver on macOS: `libusb` ships inside the
   `libusb-package` dependency. If it isn't found, `brew install libusb` and try again.
 - **Camera:** the first time you click *Start camera*, allow it in the browser. If it stays
   black, enable your browser under System Settings → Privacy & Security → Camera, then restart
   the browser. USB cameras on the hub appear in the camera dropdown.
+- **Browser:** Chrome, Safari, Edge or Firefox. Joysticks, keys and the 3D view work in all of
+  them; `Cmd`/`Option` shortcuts are left alone, so `Cmd+R` still reloads (hold-keys are released
+  when the window loses focus). The 3D view and LiveKit need internet.
 - **Keyboard controller** (`controller.py`) reads single keys in Terminal/iTerm, arrows included.
+- **Stop the app** with `Ctrl-C` in its Terminal tab (it parks the arms first); closing the
+  browser tab does not stop it.
 - If `./run.sh` says *permission denied*: `chmod +x run.sh setup.sh`, or use `bash run.sh`.
 
 ## 2. Try it without hardware
