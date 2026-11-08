@@ -453,44 +453,95 @@ const Arm3D = (() => {
     applyWorld(arm);
   }
 
+  // ---- soft tortilla: a polar mesh re-shaped every frame (lying with its fold, or hanging from the jaws) ----
+  const NR = 14, NS = 56;                      // rings x segments
   function makeWorld(group) {
-    const tort = new T.Group(), plate = new T.Group();
-    const tm = new T.Mesh(new T.CylinderGeometry(1, 1, 1, 48), new T.MeshStandardMaterial({ color: 0xe6c27f, roughness: 0.95 }));
-    tm.rotation.x = Math.PI / 2;  // cylinder axis y -> z (the world here is z-up)
-    tort.add(tm);
+    const n = 1 + NR * NS, pos = new Float32Array(n * 3), col = new Float32Array(n * 3), uv = [];
+    uv.push([0, 0]);
+    for (let r = 1; r <= NR; r++) for (let s = 0; s < NS; s++) {
+      const a = s / NS * Math.PI * 2, rho = r / NR;
+      uv.push([rho * Math.cos(a), rho * Math.sin(a)]);
+    }
+    const idx = [];
+    for (let s = 0; s < NS; s++) idx.push(0, 1 + s, 1 + (s + 1) % NS);
+    for (let r = 1; r < NR; r++) for (let s = 0; s < NS; s++) {
+      const a = 1 + (r - 1) * NS + s, b = 1 + (r - 1) * NS + (s + 1) % NS, c = a + NS, d = b + NS;
+      idx.push(a, c, b, b, c, d);
+    }
+    // toasted spots: a cheap hash noise on the base colour
+    uv.forEach(([x, y], i) => {
+      const h = Math.abs(Math.sin(x * 91.7 + y * 47.3) * 43758.5) % 1, k = h > 0.93 ? 0.72 : h > 0.85 ? 0.86 : 1;
+      col.set([0.91 * k, 0.77 * k, 0.5 * k], i * 3);
+    });
+    const geo = new T.BufferGeometry();
+    geo.setAttribute("position", new T.BufferAttribute(pos, 3));
+    geo.setAttribute("color", new T.BufferAttribute(col, 3));
+    geo.setIndex(idx);
+    const tm = new T.Mesh(geo, new T.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, side: T.DoubleSide }));
+    tm.frustumCulled = false;
+    const plate = new T.Group();
     const pm = new T.Mesh(new T.CylinderGeometry(1, 0.8, 1, 48), new T.MeshStandardMaterial({ color: 0xf0efe9, roughness: 0.35 }));
-    pm.rotation.x = Math.PI / 2;
+    pm.rotation.x = Math.PI / 2;  // cylinder axis y -> z (the world here is z-up)
     plate.add(pm);
-    tort.matrixAutoUpdate = false;
-    tort.visible = plate.visible = false;
-    group.add(tort, plate);
-    return { tort, tm, plate, pm, server: null, rel: null };
+    tm.visible = plate.visible = false;
+    group.add(tm, plate);
+    return { tm, uv, plate, pm, server: null, dirX: 1, dirY: 0 };
   }
   function linkInGroup(arm, link) {
     arm.group.updateMatrixWorld(true);
     return new T.Matrix4().copy(arm.group.matrixWorld).invert().multiply(link.matrixWorld);
   }
-  // tortilla + plate from the server's world (the server decides grasp / release)
+  // hanging sheet: arc of bend radius RB from the jaws, then straight down-ish
+  const RB = 0.045, TH = Math.PI / 2 * 0.92;
+  function hang(s) {
+    const s1 = RB * TH;
+    if (s <= s1) return [RB * Math.sin(s / RB), -RB * (1 - Math.cos(s / RB))];
+    return [RB * Math.sin(TH) + (s - s1) * Math.cos(TH), -RB * (1 - Math.cos(TH)) - (s - s1) * Math.sin(TH)];
+  }
   function applyWorld(arm) {
     const w = arm.world, sv = w.server;
-    w.tort.visible = w.plate.visible = !!sv;
+    w.tm.visible = w.plate.visible = !!sv;
     if (!sv) return;
-    const t = sv.tortilla, p = sv.plate, r = t.rot;
+    const t = sv.tortilla, p = sv.plate, R = t.r;
     w.pm.scale.set(p.r, p.h, p.r);
     w.plate.position.set(p.pos[0], p.pos[1], p.h / 2);
-    w.tm.scale.set(t.r, t.t, t.r);
-    const server = new T.Matrix4().set(r[0], r[1], r[2], t.pos[0], r[3], r[4], r[5], t.pos[1], r[6], r[7], r[8], t.pos[2], 0, 0, 0, 1);
-    const link = arm.robot.links && arm.robot.links.link_007;
-    if (t.held && link) {  // ride with the (smoothed) gripper instead of the 5 Hz server pose
-      const g = linkInGroup(arm, link);
-      if (!w.rel) w.rel = g.clone().invert().multiply(server);
-      w.tort.matrix.copy(g.multiply(w.rel));
+    const surf = (x, y) => (Math.hypot(x - p.pos[0], y - p.pos[1]) <= p.r ? p.h : 0) + 0.0015;
+    const P = w.tm.geometry.attributes.position, a = P.array;
+    const gcLink = arm.robot.links && arm.robot.links.grasp_center;
+    if (t.held && gcLink && sv.grasp) {
+      // hang from the (smoothed) jaws; the body lies on the side away from the grip
+      const G = new T.Vector3().setFromMatrixPosition(linkInGroup(arm, gcLink));
+      const dx = t.pos[0] - sv.grasp[0], dy = t.pos[1] - sv.grasp[1], dl = Math.hypot(dx, dy);
+      if (dl > 0.005) { w.dirX += (dx / dl - w.dirX) * 0.3; w.dirY += (dy / dl - w.dirY) * 0.3; }
+      const nl = Math.hypot(w.dirX, w.dirY) || 1, ux = w.dirX / nl, uy = w.dirY / nl;
+      const DG = R * 0.55;  // the fold sits this far from the centre
+      w.uv.forEach(([lx, ly], i) => {
+        const along = lx * R + DG, side = ly * R;
+        const [hh, vv] = hang(Math.abs(along));
+        const sg = along < 0 ? -1 : 1;
+        let x = G.x + ux * hh * sg - uy * side, y = G.y + uy * hh * sg + ux * side;
+        let z = G.z + vv - 3.5 * side * side - 0.004;
+        z = Math.max(z, surf(x, y));  // where it reaches the table it lies on it
+        a[i * 3] = x; a[i * 3 + 1] = y; a[i * 3 + 2] = z;
+      });
     } else {
-      w.rel = null;
-      w.tort.matrix.copy(server);
+      // lying flat, with the pushed edge bunched up into a fold
+      const r = t.rot, cx = t.pos[0], cy = t.pos[1], c = r[0], s = r[3];
+      const fold = t.fold || 0, fa = t.fold_at, fh = (t.fold_h || 0.025) * fold;
+      w.uv.forEach(([lx, ly], i) => {
+        const x0 = lx * R, y0 = ly * R;
+        let x = cx + c * x0 - s * y0, y = cy + s * x0 + c * y0, z = surf(cx, cy);
+        if (fh > 0 && fa) {
+          const d = Math.hypot(x - fa[0], y - fa[1]);
+          z += fh * Math.exp(-((d / 0.022) ** 2)) + fh * 0.25 * Math.exp(-((d / 0.04) ** 2)) * Math.sin(d * 260);
+        }
+        a[i * 3] = x; a[i * 3 + 1] = y; a[i * 3 + 2] = z;
+      });
     }
-    w.tort.matrixWorldNeedsUpdate = true;
-    if (arm.marker) arm.marker.material.color.setHex(t.held ? 0x3ddc84 : (sv.gap_mm != null && sv.gap_mm < 12) ? 0xffb020 : 0xffffff);
+    P.needsUpdate = true;
+    w.tm.geometry.computeVertexNormals();
+    if (arm.marker) arm.marker.material.color.setHex(t.held ? 0x3ddc84 : (sv.gap_mm != null && sv.gap_mm < 12) ? 0xffb020
+      : t.pressing ? 0x4aa3ff : 0xffffff);
   }
 
   function renderPip(arm) {

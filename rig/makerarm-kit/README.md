@@ -201,21 +201,27 @@ Each arm has a small virtual world in the 3D view: a **tortilla** (16 cm) in fro
 **plate** to its right. It works in the simulator and with the real arms (a digital twin; there's no
 real tortilla involved).
 
-- **Grasp:** close the gripper with the **grasp point** (the dot between the jaws, from the SDK's URDF)
-  on the tortilla's outer 5 cm, at most 3 cm above it. The dot turns amber when the jaws are closed
-  and green while holding. **Open** the gripper to let go: it drops flat onto the table, or onto the
-  plate ("placed on the plate!"). **Reset tortilla** puts it back.
+- **The tortilla is soft and flat: you can't pinch it straight off the table.** Like a real one:
+  1. **Press:** lower the **open** gripper until the **grasp point** (the dot between the jaws, from
+     the SDK's URDF) touches the tortilla's outer edge (the dot turns blue while pressing).
+  2. **Push** about 3 cm toward the centre: the edge bunches up into a **fold** ("fold 60 %…
+     fold ready"). Pushing past a full fold slides the whole tortilla.
+  3. **Close** the jaws on the fold (within 3 cm of it): "grasped by the fold!" (dot green). Closing on
+     the flat part fails and says why.
+  4. Held, it **hangs** from the jaws and bends with gravity; where it touches the table it lies on it.
+     **Open** to let go: it drops flat onto the table, or onto the plate ("placed on the plate!").
+  **Reset tortilla** puts it back.
 - **Gripper cam:** the small inset is a camera mounted on the wrist, looking down the jaws, to aim
   before closing. Hide/show it with the button on the view. It is included when you share the view.
 - **Steps card:** **+ Add current pose** records all 7 joints (the gripper too), then **▶ Play** goes
   through them in order (or **Go** for one step), at the Speed slider's speed, all joints arriving
   together. **Loop** repeats. Steps stay in the browser; **Save…/Load…** as JSON to share them.
-  **Load tortilla demo** loads a sequence that picks the tortilla up and puts it on the plate.
+  **Load tortilla demo** loads a 9-step sequence: press the edge, push to fold it, close on the fold, lift, carry it to the plate and let go.
 - **Safety:** playback streams setpoints that the server clamps like the joysticks (safe range, at
   most 8° ahead of the real arm). A joystick, a key, `Space`, switching arm or losing control stops it
   and the arm holds. Remote teammates need control to play steps.
 
-The grasp rule is a geometric check, not physics: use it to practise reach, approach and timing.
+The fold/grasp rules are geometric checks and the drape is a visual model, not a cloth simulation: use them to practise approach, the press-and-push motion and timing.
 The gripper angle → jaw gap is the SDK's uncalibrated preview (0° closed, −96° fully open).
 Try it now: `python web_app.py --sim` → **Power on** → **Load tortilla demo** → **▶ Play**.
 
