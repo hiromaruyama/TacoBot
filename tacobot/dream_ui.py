@@ -38,8 +38,8 @@ sys.path.insert(0, str(UPSTREAM_SRC))
 from aiohttp import web
 from livekit.portal import Operator, OperatorConfig, frame_bytes_to_numpy_rgb
 from utils.common import (CONFIG_PATH, DREAM_PAUSE_RPC, DREAM_RESUME_RPC, DREAM_SET_TASK_RPC, DREAM_STATUS_RPC,
-                          DREAM_TASKS_IDENTITY, HOME_RPC, PARK_ONLY, PARK_RPC, PARK_TOGGLE, ROBOT_IDENTITY,
-                          load_env, mint_token, required_env)
+                          DREAM_TASKS_IDENTITY, HOME_RPC, PARK_ONLY, PARK_RPC, PARK_TOGGLE, RELEASE_RPC,
+                          ROBOT_IDENTITY, load_env, mint_token, required_env)
 
 PORT = 8808
 TRACKS = {"overhead": "overhead_camera", "left": "left_wrist_camera", "right": "right_wrist_camera"}
@@ -83,8 +83,9 @@ class Panel:
             return {"reply": reply}
 
     async def robot(self, method: str, payload: str = "") -> str:
+        # Generous timeout: the robot acks the queued request fast, but it is busy at 30 fps + 3 cams.
         return await self.op.perform_rpc(method, payload=payload, destination=ROBOT_IDENTITY,
-                                         response_timeout_ms=8000)
+                                         response_timeout_ms=15000)
 
     async def close(self) -> None:
         if self.op is not None:
@@ -122,6 +123,7 @@ input{flex:1;min-width:280px;padding:10px;border-radius:8px;border:1px solid #33
 button{padding:10px 16px;border:0;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer}
 .run{background:#2e7d32;color:#fff}.pause{background:#8d6e00;color:#fff}
 .power{background:#1565c0;color:#fff}.park{background:#b71c1c;color:#fff}.home{background:#37474f;color:#fff}
+.release{background:#6a1b9a;color:#fff}
 #msg{font-family:monospace;font-size:13px;color:#9fd;white-space:pre-wrap;min-height:20px}
 </style></head><body>
 <h1>Dream-1 control <span id=state class=pill>connecting...</span></h1>
@@ -137,8 +139,9 @@ button{padding:10px 16px;border:0;border-radius:8px;font-size:14px;font-weight:6
 </div>
 <div class=row>
   <button class=power onclick=call('/power')>Power on / off (toggle)</button>
-  <button class=park onclick=call('/park')>Park (power off)</button>
   <button class=home onclick=call('/home')>Reset to home</button>
+  <button class=park onclick=call('/park')>Park (power off)</button>
+  <button class=release onclick=release()>Release lock (limp)</button>
 </div>
 <div id=msg></div>
 <script>
@@ -157,8 +160,12 @@ async function call(path){
 async function run(){
   const task=document.getElementById('prompt').value.trim();
   if(!task){document.getElementById('msg').textContent='type an instruction first';return;}
-  const r=await post('/prompt',{task:task});
+  const r=await post('/prompt',{task:task});  // sets the task AND resumes (takes control = 'c')
   document.getElementById('msg').textContent=r.message||r.error||JSON.stringify(r);
+}
+async function release(){
+  if(!confirm('RELEASE LOCK: the arms are brakeless and will go LIMP and may fall. Are you holding them?'))return;
+  call('/release');
 }
 async function poll(){
   try{const s=await (await fetch('/status')).json();
@@ -224,6 +231,7 @@ def build_app(panel: Panel) -> web.Application:
     app.router.add_post("/power", robot_route(PARK_RPC, PARK_TOGGLE, "power toggled"))
     app.router.add_post("/park", robot_route(PARK_RPC, PARK_ONLY, "parking"))
     app.router.add_post("/home", robot_route(HOME_RPC, "", "returning home"))
+    app.router.add_post("/release", robot_route(RELEASE_RPC, "", "releasing torque"))
     app.router.add_get("/status", status)
     return app
 
